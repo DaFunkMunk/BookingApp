@@ -1,0 +1,16 @@
+[
+  {
+    "_id": {"$oid": "66f000000000000000000101"},
+    "title": "Intro to MongoDB",
+    "status": "Open",
+    "location": "Room A",
+    "capacity": 30,
+    "slotsBooked": 0,
+    "waitlistEnabled": true,
+    "requiresApproval": false,
+    "eventTypeId": {"$oid": "66f000000000000000000001"},
+    "eventImageUrl": "",
+    "eventImageDescription": ""
+  }
+]
+

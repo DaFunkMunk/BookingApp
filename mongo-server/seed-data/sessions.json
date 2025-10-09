@@ -1,0 +1,25 @@
+[
+  {
+    "_id": {"$oid": "66f000000000000000000201"},
+    "eventId": {"$oid": "66f000000000000000000101"},
+    "title": "Morning Session",
+    "startDateTime": {"$date": "2025-10-15T09:00:00Z"},
+    "endDateTime": {"$date": "2025-10-15T10:30:00Z"},
+    "status": "Open",
+    "sessionCapacity": 20,
+    "capacityOverride": null,
+    "slotsBooked": 0
+  },
+  {
+    "_id": {"$oid": "66f000000000000000000202"},
+    "eventId": {"$oid": "66f000000000000000000101"},
+    "title": "Afternoon Session",
+    "startDateTime": {"$date": "2025-10-15T13:00:00Z"},
+    "endDateTime": {"$date": "2025-10-15T14:30:00Z"},
+    "status": "Open",
+    "sessionCapacity": 20,
+    "capacityOverride": null,
+    "slotsBooked": 0
+  }
+]
+
