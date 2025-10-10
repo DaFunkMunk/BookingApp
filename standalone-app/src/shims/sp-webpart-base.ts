@@ -17,4 +17,3 @@ export interface WebPartContext {
   pageContext: IPageContext;
   spHttpClient: unknown;
 }
-

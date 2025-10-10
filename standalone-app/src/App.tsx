@@ -38,4 +38,3 @@ function StandaloneApp(): JSX.Element {
 }
 
 export default StandaloneApp;
-

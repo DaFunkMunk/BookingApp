@@ -7,12 +7,21 @@
     "strict": false,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "outDir": "dist"
+    "outDir": "dist",
+    "jsx": "react",
+    "baseUrl": ".",
+    "types": ["node"],
+    "paths": {
+      "react": ["standalone-app/node_modules/react"],
+      "react/jsx-runtime": ["standalone-app/node_modules/react/jsx-runtime"],
+      "react-dom": ["standalone-app/node_modules/react-dom"],
+      "@fluentui/react": ["standalone-app/node_modules/@fluentui/react"]
+    }
   },
   "include": [
     "mongo-server/**/*.ts",
     "webparts/**/*.ts",
-    "webparts/**/*.tsx"
+    "webparts/**/*.tsx",
+    "types/**/*.d.ts"
   ]
 }
-

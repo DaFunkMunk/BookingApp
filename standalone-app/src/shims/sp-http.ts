@@ -51,4 +51,3 @@ export class SPHttpClient {
     return new SPHttpClientResponse(res);
   }
 }
-

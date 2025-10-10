@@ -21,7 +21,7 @@ export default defineConfig(({ mode }) => {
       key: fs.readFileSync(keyPath),
     };
   } else {
-    console.warn('⚠️  Vite HTTPS disabled: cert or key missing.');
+    console.warn('Vite HTTPS disabled: cert or key missing.');
     console.warn('Expected cert:', certPath);
     console.warn('Expected key :', keyPath);
     console.warn('Set VITE_HTTPS_CERT/VITE_HTTPS_KEY env vars to override.');
@@ -33,7 +33,7 @@ export default defineConfig(({ mode }) => {
       modules: [
         path.resolve(__dirname, 'node_modules'),
         path.resolve(__dirname, '../node_modules'),
-        'node_modules'
+        'node_modules',
       ],
       alias: {
         '@microsoft/sp-http': path.resolve(__dirname, 'src/shims/sp-http.ts'),
