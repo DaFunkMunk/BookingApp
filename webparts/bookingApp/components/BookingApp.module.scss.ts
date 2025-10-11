@@ -3,6 +3,11 @@ require("./BookingApp.module.css");
 const styles = {
   cardActions: 'cardActions_1101bbaa',
   container: 'container_1101bbaa',
+  managementToolbar: 'managementToolbar_1101bbaa',
+  managementToolbarInline: 'managementToolbarInline_1101bbaa',
+  toolbarRow: 'toolbarRow_1101bbaa',
+  secondaryToolbarRow: 'secondaryToolbarRow_1101bbaa',
+  toolbarButton: 'toolbarButton_1101bbaa',
   eventPanels: 'eventPanels_1101bbaa',
   eventsColumn: 'eventsColumn_1101bbaa',
   detailsColumn: 'detailsColumn_1101bbaa',

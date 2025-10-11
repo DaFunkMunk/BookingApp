@@ -47,6 +47,28 @@ body {
   padding: 0;                                  /* remove default padding */
 }
 
+.managementToolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.toolbarRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.secondaryToolbarRow {
+  opacity: 0.9;
+}
+
+.toolbarButton {
+  height: 32px;
+  padding: 0 16px;
+}
+
 /* Two-column content surface */
 .eventPanels {
   display: grid;
@@ -181,8 +203,10 @@ body {
 .actions {
   display: flex;                               /* lay out buttons horizontally */
   justify-content: flex-start;                 /* align buttons to the left */
+  align-items: center;
   gap: 12px;                                   /* spacing between buttons */
   margin-top: 14px;                            /* space above actions */
+  flex-wrap: nowrap;
 }
 
 .actions button {
@@ -193,6 +217,15 @@ body {
   cursor: pointer;                             /* pointer cursor on hover */
   font-weight: 600;                            /* semi-bold text */
   transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+}
+
+.managementToolbarInline {
+  margin-bottom: 0;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 1 1 auto;
 }
 
 /* Neutral/secondary button */

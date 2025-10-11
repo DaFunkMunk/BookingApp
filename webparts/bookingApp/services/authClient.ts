@@ -3,7 +3,9 @@ export type AuthUser = {
   email: string;
   username?: string;
   displayName?: string;
-  roles: string[];
+  roles?: string[];
+  roleIds?: string[];
+  capabilities?: string[];
   status: string;
   profile?: {
     phone?: string;

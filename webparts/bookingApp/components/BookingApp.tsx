@@ -11,10 +11,12 @@ import AvailableEvents, {
   SpSessionItem as AESession,
 } from './AvailableEvents';
 import EventDetails from './EventDetails';
+import ManagementToolbar from './ManagementToolbar';
 import reservationsApi from '../services/reservationsApi';
 import type { IDataProvider } from '../services/dataProvider';
 import HttpDataProvider from '../services/httpDataProvider';
 import authClient, { loadStoredAuth, storeAuth, type AuthSession } from '../services/authClient';
+import { CapabilityProvider } from '../services/capabilityContext';
 const calendarIcon = (
   <svg viewBox="0 0 20 20" aria-hidden="true">
     <rect x="3" y="5" width="14" height="12" rx="2" ry="2" stroke="currentColor" strokeWidth="1.5" fill="none" />
@@ -378,6 +380,28 @@ export default function BookingApp({
   const currentUserDisplayName = getProvider
     ? authedUser?.displayName || authedUser?.email || ''
     : context.pageContext.user.displayName;
+  const capabilitySet = useMemo(() => {
+    const input = Array.isArray(authedUser?.capabilities) ? authedUser.capabilities : [];
+    const normalized = new Set<string>();
+    for (const item of input) {
+      if (typeof item !== 'string') continue;
+      const trimmed = item.trim().toLowerCase();
+      if (trimmed) normalized.add(trimmed);
+    }
+    return normalized;
+  }, [authedUser?.capabilities]);
+  const capabilityContextValue = useMemo(
+    () => ({
+      capabilities: Array.from(capabilitySet),
+      hasCapability: (key: string) => {
+        if (!key) return false;
+        const normalized = key.trim().toLowerCase();
+        if (!normalized) return false;
+        return capabilitySet.has(normalized);
+      },
+    }),
+    [capabilitySet]
+  );
 
   const registerId = (source: 'event' | 'session', strId: string): number => {
     const mapFrom = source === 'event' ? eventIdFromStr : sessionIdFromStr;
@@ -1180,7 +1204,8 @@ export default function BookingApp({
   }
 
   return (
-    <div className={styles.container + (className ? ' ' + className : '')}>
+    <CapabilityProvider value={capabilityContextValue}>
+      <div className={styles.container + (className ? ' ' + className : '')}>
       {getProvider && authedUser && (
         <div
           style={{
@@ -1205,7 +1230,7 @@ export default function BookingApp({
           </button>
         </div>
       )}
-      {/* Filters toolbar */}
+      {/* Filters & management toolbar */}
       <section className={styles.filters}>
         <div className={styles.filtersGrid}>
           <div className={styles.field}>
@@ -1280,11 +1305,12 @@ export default function BookingApp({
             />
           </div>
         </div>
-          <div className={styles.actions}>
-            <button type="button" className={styles.btnGhost} onClick={handleReset}>
-              Reset
-            </button>
-          </div>
+        <div className={styles.actions}>
+          <button type="button" className={styles.btnGhost} onClick={handleReset}>
+            Reset
+          </button>
+          <ManagementToolbar className={styles.managementToolbarInline} />
+        </div>
       </section>
 
       {/* Two-column layout: LEFT = Available events, RIGHT = Event Details */}
@@ -1331,7 +1357,8 @@ export default function BookingApp({
           />
         </div>
       </div>
-    </div>
+      </div>
+    </CapabilityProvider>
   );
 }
 

@@ -10,6 +10,7 @@ import jwt, { JwtPayload } from 'jsonwebtoken';
 import { z } from 'zod';
 
 dotenv.config();
+console.log('[bootstrap] NODE_ENV=', process.env.NODE_ENV);
 
 const app = express();
 app.use(cors());
@@ -24,6 +25,7 @@ const TLS_KEY_PATH = process.env.TLS_KEY_PATH || process.env.HTTPS_KEY_PATH;
 const JWT_SECRET = process.env.JWT_SECRET || 'bookingapp-dev-secret';
 const JWT_ISSUER = process.env.JWT_ISSUER || 'booking-app';
 const JWT_TTL = process.env.JWT_TTL || '8h';
+const DEFAULT_ROLE_NAME = 'user';
 
 // --- Schemas ---
 const EventTypeSchema = new Schema({
@@ -115,6 +117,42 @@ const BookingAppUserSchema = new Schema({
   },
 }, { timestamps: true });
 
+const RoleSchema = new Schema({
+  name: { type: String, required: true, unique: true, lowercase: true, trim: true },
+  label: { type: String, trim: true },
+  description: { type: String, trim: true },
+  builtIn: { type: Boolean, default: false },
+}, { timestamps: true });
+
+const CapabilitySchema = new Schema({
+  key: { type: String, required: true, unique: true, lowercase: true, trim: true },
+  label: { type: String, trim: true },
+  description: { type: String, trim: true },
+  group: { type: String, trim: true },
+}, { timestamps: true });
+
+const RoleCapabilitySchema = new Schema({
+  roleId: { type: Schema.Types.ObjectId, ref: 'Role', required: true, index: true },
+  capabilityId: { type: Schema.Types.ObjectId, ref: 'Capability', required: true, index: true },
+  source: { type: String, default: 'manual' },
+}, { timestamps: true, collection: 'roleCapabilities' });
+RoleCapabilitySchema.index({ roleId: 1, capabilityId: 1 }, { unique: true });
+
+const UserRoleSchema = new Schema({
+  userId: { type: Schema.Types.ObjectId, ref: 'BookingAppUser', required: true, index: true },
+  roleId: { type: Schema.Types.ObjectId, ref: 'Role', required: true, index: true },
+  source: { type: String, default: 'manual' },
+}, { timestamps: true, collection: 'userRoles' });
+UserRoleSchema.index({ userId: 1, roleId: 1 }, { unique: true });
+
+const UserCapabilityOverrideSchema = new Schema({
+  userId: { type: Schema.Types.ObjectId, ref: 'BookingAppUser', required: true, index: true },
+  capabilityId: { type: Schema.Types.ObjectId, ref: 'Capability', required: true, index: true },
+  allow: { type: Boolean, required: true },
+  source: { type: String, default: 'manual' },
+}, { timestamps: true, collection: 'userCapabilitiesOverrides' });
+UserCapabilityOverrideSchema.index({ userId: 1, capabilityId: 1 }, { unique: true });
+
 ReservationSchema.index({ sessionId: 1, userId: 1 });
 ReservationSchema.index({ userId: 1, createdAt: -1 });
 ReservationSchema.index({ sessionId: 1, userEmail: 1 });
@@ -124,6 +162,11 @@ const Event = mongoose.model('Event', EventSchema);
 const Session = mongoose.model('Session', SessionSchema);
 const Reservation = mongoose.model('Reservation', ReservationSchema);
 const BookingAppUser = mongoose.model('BookingAppUser', BookingAppUserSchema);
+const Role = mongoose.model('Role', RoleSchema);
+const Capability = mongoose.model('Capability', CapabilitySchema);
+const RoleCapability = mongoose.model('RoleCapability', RoleCapabilitySchema);
+const UserRole = mongoose.model('UserRole', UserRoleSchema);
+const UserCapabilityOverride = mongoose.model('UserCapabilityOverride', UserCapabilityOverrideSchema);
 
 // --- Helpers ---
 const toObjectId = (id?: string | number | Types.ObjectId | null): Types.ObjectId | undefined => {
@@ -180,12 +223,21 @@ const normalizeEmail = (value?: string): string | undefined => {
   return trimmed ? trimmed.toLowerCase() : undefined;
 };
 
-const serializeUser = (doc: any) => ({
+type ResolvedAccess = {
+  roleIds: string[];
+  roleNames: string[];
+  capabilities: string[];
+};
+
+const serializeUser = (doc: any, access?: ResolvedAccess) => ({
   _id: toPlainStringId(doc?._id) ?? '',
   email: doc?.email ?? '',
   username: doc?.username ?? '',
   displayName: doc?.displayName ?? '',
-  roles: Array.isArray(doc?.roles) ? doc.roles.filter((role: unknown) => typeof role === 'string') : [],
+  roles: access?.roleNames
+    ?? (Array.isArray(doc?.roles) ? doc.roles.filter((role: unknown) => typeof role === 'string') : []),
+  roleIds: access?.roleIds,
+  capabilities: access?.capabilities,
   status: doc?.status ?? 'active',
   profile: doc?.profile ?? undefined,
   lastLoginAt: serializeDate(doc?.lastLoginAt),
@@ -193,37 +245,171 @@ const serializeUser = (doc: any) => ({
   updatedAt: serializeDate(doc?.updatedAt),
 });
 
+const ensureStringArray = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter((item): item is string => Boolean(item));
+};
+
+async function assignRoleToUser(userIdInput: unknown, roleNameInput: string): Promise<void> {
+  const userId = toObjectId(userIdInput as any);
+  const roleName = typeof roleNameInput === 'string' ? roleNameInput.trim().toLowerCase() : '';
+  if (!userId || !roleName) return;
+  const roleDoc = await Role.findOne({ name: roleName }).lean();
+  if (!roleDoc?._id) return;
+  try {
+    await UserRole.create({
+      userId,
+      roleId: roleDoc._id,
+      source: 'system',
+    });
+  } catch (err: any) {
+    if (!(err && typeof err === 'object' && 'code' in err && err.code === 11000)) {
+      throw err;
+    }
+  }
+}
+
+async function resolveUserAccess(userIdInput: unknown, legacyRoles?: unknown): Promise<ResolvedAccess> {
+  const userId = toObjectId(userIdInput as any);
+  if (!userId) {
+    console.log('[rbac] resolveUserAccess missing userId', userIdInput);
+    return { roleIds: [], roleNames: [], capabilities: [] };
+  }
+  console.log('[rbac] resolveUserAccess', userId.toHexString());
+
+  const legacyRoleNames = ensureStringArray(legacyRoles).map((name) => name.toLowerCase());
+
+  const [userRoleDocs, overrideDocs] = await Promise.all([
+    UserRole.find({ userId }).select({ roleId: 1 }).lean(),
+    UserCapabilityOverride.find({ userId }).select({ capabilityId: 1, allow: 1 }).lean(),
+  ]);
+  console.log('[rbac] userRoleDocs', userId.toHexString(), userRoleDocs);
+  console.log('[rbac] overrides', userId.toHexString(), overrideDocs);
+
+  const roleObjectIds = userRoleDocs
+    .map((doc) => toObjectId(doc.roleId))
+    .filter((id): id is Types.ObjectId => Boolean(id));
+
+  const roleQuery: Record<string, unknown>[] = [];
+  if (roleObjectIds.length > 0) {
+    roleQuery.push({ _id: { $in: roleObjectIds } });
+  }
+  if (legacyRoleNames.length > 0) {
+    roleQuery.push({ name: { $in: legacyRoleNames } });
+  }
+
+  const roleDocs = roleQuery.length > 0
+    ? await Role.find(roleQuery.length === 1 ? roleQuery[0] : { $or: roleQuery }).lean()
+    : [];
+
+  const resolvedRoleIds = new Set<string>();
+  const resolvedRoleNames = new Set<string>();
+  const roleIdsForCapabilities: Types.ObjectId[] = [];
+
+  roleDocs.forEach((doc) => {
+    const idStr = toPlainStringId(doc?._id);
+    const name = typeof doc?.name === 'string' ? doc.name : undefined;
+    if (idStr) {
+      resolvedRoleIds.add(idStr);
+      const oid = toObjectId(doc?._id);
+      if (oid) {
+        roleIdsForCapabilities.push(oid);
+      }
+    }
+    if (name) {
+      resolvedRoleNames.add(name);
+    }
+  });
+
+  const roleCapabilityDocs = roleIdsForCapabilities.length > 0
+    ? await RoleCapability.find({ roleId: { $in: roleIdsForCapabilities } })
+        .select({ capabilityId: 1 })
+        .lean()
+    : [];
+
+  const capabilityIdSet = new Set<string>();
+  roleCapabilityDocs.forEach((doc) => {
+    const idStr = toPlainStringId(doc.capabilityId);
+    if (idStr) capabilityIdSet.add(idStr);
+  });
+
+  overrideDocs.forEach((doc) => {
+    const idStr = toPlainStringId(doc.capabilityId);
+    if (!idStr) return;
+    if (doc.allow === false) {
+      capabilityIdSet.delete(idStr);
+    } else if (doc.allow === true) {
+      capabilityIdSet.add(idStr);
+    }
+  });
+
+  const capabilityObjectIds = Array.from(capabilityIdSet)
+    .map((id) => toObjectId(id))
+    .filter((id): id is Types.ObjectId => Boolean(id));
+
+  const capabilityDocs = capabilityObjectIds.length > 0
+    ? await Capability.find({ _id: { $in: capabilityObjectIds } }).lean()
+    : [];
+
+  const capabilityKeys = capabilityDocs
+    .map((doc) => (typeof doc?.key === 'string' ? doc.key : undefined))
+    .filter((key): key is string => Boolean(key));
+
+  return {
+    roleIds: Array.from(resolvedRoleIds),
+    roleNames: Array.from(resolvedRoleNames),
+    capabilities: Array.from(new Set(capabilityKeys)),
+  };
+}
+
+type AuthJwtPayload = JwtPayload & {
+  roles?: string[];
+  roleIds?: string[];
+  capabilities?: string[];
+};
+
 type AuthContext = {
   user: any;
   token: string;
-  payload: JwtPayload;
+  payload: AuthJwtPayload;
+  access: ResolvedAccess;
 };
 
 interface AuthenticatedRequest extends Request {
   auth?: AuthContext;
 }
 
-const createAuthToken = (user: any): string => {
+const createAuthToken = (user: any, access: ResolvedAccess): string => {
   const sub = toPlainStringId(user?._id);
   if (!sub) {
     throw new Error('Unable to create auth token without user id');
   }
-  const roles = Array.isArray(user?.roles) ? user.roles.filter((role: unknown) => typeof role === 'string') : [];
-  return jwt.sign(
-    {
-      sub,
-      email: user?.email,
-      roles,
-      displayName: user?.displayName,
-      status: user?.status ?? 'active',
-    },
-    JWT_SECRET,
-    {
-      expiresIn: JWT_TTL,
-      issuer: JWT_ISSUER,
-    }
-  );
+  const legacyRoles = ensureStringArray(user?.roles);
+  const roles = access.roleNames.length > 0 ? access.roleNames : legacyRoles;
+  const payload: AuthJwtPayload = {
+    sub,
+    email: user?.email,
+    displayName: user?.displayName,
+    status: user?.status ?? 'active',
+  };
+  if (roles.length > 0) payload.roles = roles;
+  if (access.roleIds.length > 0) payload.roleIds = access.roleIds;
+  if (access.capabilities.length > 0) payload.capabilities = access.capabilities;
+  return jwt.sign(payload, JWT_SECRET, {
+    expiresIn: JWT_TTL,
+    issuer: JWT_ISSUER,
+  });
 };
+
+async function buildAuthEnvelope(userInput: any): Promise<{ user: ReturnType<typeof serializeUser>; token: string; access: ResolvedAccess }> {
+  const userObj = typeof userInput?.toObject === 'function' ? userInput.toObject() : userInput;
+  const access = await resolveUserAccess(userObj?._id, userObj?.roles);
+  const token = createAuthToken(userObj, access);
+  const user = serializeUser(userObj, access);
+  return { user, token, access };
+}
 
 const requireAuth = async (req: Request, res: Response, next: NextFunction) => {
   const header = req.headers.authorization || (req.headers.Authorization as string | undefined);
@@ -236,7 +422,7 @@ const requireAuth = async (req: Request, res: Response, next: NextFunction) => {
     return res.status(401).json({ error: 'Authorization required' });
   }
   try {
-    const payload = jwt.verify(token, JWT_SECRET, { issuer: JWT_ISSUER }) as JwtPayload;
+    const payload = jwt.verify(token, JWT_SECRET, { issuer: JWT_ISSUER }) as AuthJwtPayload;
     const sub = typeof payload.sub === 'string' ? payload.sub : undefined;
     const userId = toObjectId(sub);
     if (!userId) {
@@ -249,11 +435,31 @@ const requireAuth = async (req: Request, res: Response, next: NextFunction) => {
     if (user.status && user.status !== 'active') {
       return res.status(403).json({ error: 'Account is not active' });
     }
-    (req as AuthenticatedRequest).auth = { user, token, payload };
+    const access = await resolveUserAccess(user._id, user.roles);
+    const enrichedPayload: AuthJwtPayload = {
+      ...payload,
+      roles: access.roleNames,
+      roleIds: access.roleIds,
+      capabilities: access.capabilities,
+    };
+    (req as AuthenticatedRequest).auth = { user, token, payload: enrichedPayload, access };
     return next();
   } catch {
     return res.status(401).json({ error: 'Invalid token' });
   }
+};
+
+const requireCapability = (capability: string) => (req: Request, res: Response, next: NextFunction) => {
+  const auth = (req as AuthenticatedRequest).auth;
+  const capabilityKey = capability.trim().toLowerCase();
+  if (!auth?.access || !capabilityKey) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  const hasCapability = auth.access.capabilities.some((key) => key === capabilityKey);
+  if (!hasCapability) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  return next();
 };
 
 async function backfillReservationsForUser(user: any): Promise<void> {
@@ -337,14 +543,15 @@ app.post('/api/users', async (req, res) => {
       username: data.username,
       displayName: data.displayName,
       passwordHash,
-      roles: ['user'],
+      roles: [DEFAULT_ROLE_NAME],
       status: 'active',
     });
     const userObj = created.toObject();
+    await assignRoleToUser(userObj._id, DEFAULT_ROLE_NAME);
     await backfillReservationsForUser(userObj);
-    const token = createAuthToken(userObj);
+    const { user, token } = await buildAuthEnvelope(userObj);
     return res.status(201).json({
-      user: serializeUser(userObj),
+      user,
       token,
     });
   } catch (err: any) {
@@ -386,8 +593,9 @@ app.post('/api/auth/login', async (req, res) => {
   await userDoc.save();
   const userObj = userDoc.toObject();
   await backfillReservationsForUser(userObj);
-  const token = createAuthToken(userObj);
-  return res.json({ user: serializeUser(userObj), token });
+  const { user, token, access } = await buildAuthEnvelope(userObj);
+  console.log('[login] access', access);
+  return res.json({ user, token });
 });
 
 app.get('/api/auth/me', requireAuth, (req, res) => {
@@ -395,7 +603,7 @@ app.get('/api/auth/me', requireAuth, (req, res) => {
   if (!auth?.user) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
-  return res.json({ user: serializeUser(auth.user) });
+  return res.json({ user: serializeUser(auth.user, auth.access) });
 });
 
 app.get('/api/event-types', async (_req, res) => {
