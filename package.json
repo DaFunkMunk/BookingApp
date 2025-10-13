@@ -9,7 +9,10 @@
     "dev:ui": "npm run dev --prefix standalone-app",
     "dev:all": "concurrently \"npm run dev:api\" \"npm run dev:ui\"",
     "dev": "npm run dev:all",
-    "seed": "ts-node mongo-server/seed.ts"
+    "seed": "ts-node mongo-server/seed.ts",
+    "build:api": "tsc -p tsconfig.server.json",
+    "build": "npm run build:api",
+    "start": "node dist/server.js"
   },
   "keywords": [],
   "author": "",

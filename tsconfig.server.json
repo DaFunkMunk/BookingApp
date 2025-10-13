@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "esModuleInterop": true,
+    "strict": false,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "rootDir": "mongo-server",
+    "outDir": "dist",
+    "types": ["node"]
+  },
+  "include": ["mongo-server/**/*.ts"]
+}
