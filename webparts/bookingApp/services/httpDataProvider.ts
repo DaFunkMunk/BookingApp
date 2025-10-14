@@ -1,4 +1,14 @@
-import { IDataProvider, EventType, EventItem, SessionItem, ReservationItem, CreateReservationInput } from './dataProvider';
+import {
+  IDataProvider,
+  EventType,
+  EventItem,
+  SessionItem,
+  ReservationItem,
+  CreateReservationInput,
+  CreateEventInput,
+  CreateEventResponse,
+  UploadSignatureResponse,
+} from './dataProvider';
 
 export class HttpDataProvider implements IDataProvider {
   private authToken?: string;
@@ -36,6 +46,22 @@ export class HttpDataProvider implements IDataProvider {
       ...item,
       startTime: HttpDataProvider.normalizeUtcToLocal(item.startTime),
       endTime: HttpDataProvider.normalizeUtcToLocal(item.endTime),
+    };
+  }
+
+  private static mapEvent(item: EventItem): EventItem {
+    return {
+      ...item,
+      eventImageUrl: item.eventImageUrl,
+      eventImageDescription: item.eventImageDescription,
+    };
+  }
+
+  private static mapSessionItem(item: SessionItem): SessionItem {
+    return {
+      ...item,
+      startDateTime: HttpDataProvider.normalizeUtcToLocal(item.startDateTime),
+      endDateTime: HttpDataProvider.normalizeUtcToLocal(item.endDateTime),
     };
   }
 
@@ -159,6 +185,25 @@ export class HttpDataProvider implements IDataProvider {
       body,
     });
     return res.slotsBooked;
+  }
+
+  async createEvent(input: CreateEventInput): Promise<CreateEventResponse> {
+    const body = JSON.stringify(input);
+    const result = await this.send<{ event: EventItem; sessions?: SessionItem[] }>('/api/events', {
+      method: 'POST',
+      body,
+    });
+    return {
+      event: HttpDataProvider.mapEvent(result.event),
+      sessions: result.sessions?.map((item) => HttpDataProvider.mapSessionItem(item)),
+    };
+  }
+
+  async createUploadSignature(): Promise<UploadSignatureResponse> {
+    return this.send<UploadSignatureResponse>('/api/uploads/signature', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
   }
 }
 

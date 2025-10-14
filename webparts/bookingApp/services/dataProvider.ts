@@ -17,6 +17,31 @@ export type EventItem = {
   eventImageDescription?: string;
 };
 
+export type CreateEventInput = {
+  title: string;
+  status?: string;
+  location?: string;
+  capacity?: number;
+  waitlistEnabled?: boolean;
+  requiresApproval?: boolean;
+  eventTypeId?: string;
+  eventImageUrl?: string;
+  eventImageDescription?: string;
+};
+
+export type CreateEventResponse = {
+  event: EventItem;
+  sessions?: SessionItem[];
+};
+
+export type UploadSignatureResponse = {
+  timestamp: number;
+  signature: string;
+  apiKey: string;
+  cloudName: string;
+  folder?: string;
+};
+
 export type SessionItem = {
   _id: string;
   eventId?: string;
@@ -79,4 +104,7 @@ export interface IDataProvider {
   createReservation(input: CreateReservationInput): Promise<ReservationItem>;
   cancelReservation(id: string): Promise<{ slotsBooked?: number; status?: string } | undefined>;
   incrementSessionSlotsBooked(sessionId: string, delta: number): Promise<number>;
+
+  createEvent(input: CreateEventInput): Promise<CreateEventResponse>;
+  createUploadSignature(): Promise<UploadSignatureResponse>;
 }

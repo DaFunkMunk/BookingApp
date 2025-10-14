@@ -7,6 +7,7 @@ import fs from 'fs';
 import https from 'https';
 import bcrypt from 'bcryptjs';
 import jwt, { JwtPayload } from 'jsonwebtoken';
+import { v2 as cloudinary } from 'cloudinary';
 import { z } from 'zod';
 
 dotenv.config();
@@ -26,6 +27,28 @@ const JWT_SECRET = process.env.JWT_SECRET || 'bookingapp-dev-secret';
 const JWT_ISSUER = process.env.JWT_ISSUER || 'booking-app';
 const JWT_TTL = process.env.JWT_TTL || '8h';
 const DEFAULT_ROLE_NAME = 'user';
+
+const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
+const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY;
+const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET;
+const CLOUDINARY_UPLOAD_FOLDER = process.env.CLOUDINARY_UPLOAD_FOLDER || 'bookingapp/events';
+
+const isCloudinaryEnabled =
+  Boolean(CLOUDINARY_CLOUD_NAME) &&
+  Boolean(CLOUDINARY_API_KEY) &&
+  Boolean(CLOUDINARY_API_SECRET);
+
+if (isCloudinaryEnabled) {
+  cloudinary.config({
+    cloud_name: CLOUDINARY_CLOUD_NAME,
+    api_key: CLOUDINARY_API_KEY,
+    api_secret: CLOUDINARY_API_SECRET,
+    secure: true,
+  });
+} else {
+  // eslint-disable-next-line no-console
+  console.warn('[cloudinary] configuration missing. Upload signature endpoint disabled.');
+}
 
 // --- Schemas ---
 const EventTypeSchema = new Schema({
@@ -211,6 +234,38 @@ const serializeReservation = (doc: any) => ({
   endTime: serializeDate(doc?.endTime),
   location: doc?.location ?? '',
   eventType: doc?.eventType ?? '',
+  createdAt: serializeDate(doc?.createdAt),
+  updatedAt: serializeDate(doc?.updatedAt),
+});
+
+const serializeEvent = (doc: any) => ({
+  _id: toPlainStringId(doc?._id) ?? '',
+  title: doc?.title ?? '',
+  status: doc?.status ?? undefined,
+  location: doc?.location ?? undefined,
+  capacity: typeof doc?.capacity === 'number' ? doc.capacity : undefined,
+  slotsBooked: typeof doc?.slotsBooked === 'number' ? doc.slotsBooked : undefined,
+  waitlistEnabled: typeof doc?.waitlistEnabled === 'boolean' ? doc.waitlistEnabled : undefined,
+  requiresApproval: typeof doc?.requiresApproval === 'boolean' ? doc.requiresApproval : undefined,
+  eventTypeId: toPlainStringId(doc?.eventTypeId),
+  eventType: doc?.eventType ?? undefined,
+  eventImageUrl: doc?.eventImageUrl ?? undefined,
+  eventImageDescription: doc?.eventImageDescription ?? undefined,
+  createdAt: serializeDate(doc?.createdAt),
+  updatedAt: serializeDate(doc?.updatedAt),
+});
+
+const serializeSession = (doc: any) => ({
+  _id: toPlainStringId(doc?._id) ?? '',
+  eventId: toPlainStringId(doc?.eventId),
+  title: doc?.title ?? '',
+  startDateTime: serializeDate(doc?.startDateTime),
+  endDateTime: serializeDate(doc?.endDateTime),
+  status: doc?.status ?? undefined,
+  sessionCapacity: typeof doc?.sessionCapacity === 'number' ? doc.sessionCapacity : undefined,
+  capacityOverride: typeof doc?.capacityOverride === 'number' ? doc.capacityOverride : undefined,
+  slotsBooked: typeof doc?.slotsBooked === 'number' ? doc.slotsBooked : undefined,
+  details: doc?.details ?? undefined,
   createdAt: serializeDate(doc?.createdAt),
   updatedAt: serializeDate(doc?.updatedAt),
 });
@@ -507,6 +562,31 @@ const loginInputSchema = z.object({
   password: z.string().min(1),
 });
 
+const createEventInputSchema = z.object({
+  title: z.string().trim().min(1),
+  status: z.string().trim().optional(),
+  location: z.string().trim().optional(),
+  capacity: z.number().int().nonnegative().optional(),
+  waitlistEnabled: z.boolean().optional(),
+  requiresApproval: z.boolean().optional(),
+  eventTypeId: z.string().trim().optional(),
+  eventImageUrl: z.string().url().optional(),
+  eventImageDescription: z.string().trim().optional(),
+  sessions: z
+    .array(
+      z.object({
+        title: z.string().trim().min(1),
+        startDateTime: z.string().trim(),
+        endDateTime: z.string().trim(),
+        status: z.string().trim().optional(),
+        sessionCapacity: z.number().int().nonnegative().optional(),
+        capacityOverride: z.number().int().nonnegative().optional(),
+        details: z.string().trim().optional(),
+      })
+    )
+    .optional(),
+});
+
 // --- Routes ---
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
@@ -523,6 +603,22 @@ app.get('/', (_req, res) => {
     'If you expected HTTPS and it is not available, ensure TLS_CERT_PATH, TLS_KEY_PATH, and HTTPS_PORT are set in .env,',
     'and that the cert/key files exist (e.g., created with mkcert).',
   ].join('\n'));
+});
+
+app.post('/api/uploads/signature', requireAuth, requireCapability('event:create'), (req, res) => {
+  if (!isCloudinaryEnabled) {
+    return res.status(503).json({ error: 'Image uploads are not enabled' });
+  }
+  const timestamp = Math.round(Date.now() / 1000);
+  const params = { timestamp, folder: CLOUDINARY_UPLOAD_FOLDER };
+  const signature = cloudinary.utils.api_sign_request(params, CLOUDINARY_API_SECRET as string);
+  return res.json({
+    timestamp,
+    signature,
+    apiKey: CLOUDINARY_API_KEY,
+    cloudName: CLOUDINARY_CLOUD_NAME,
+    folder: CLOUDINARY_UPLOAD_FOLDER,
+  });
 });
 
 app.post('/api/users', async (req, res) => {
@@ -639,6 +735,68 @@ app.get('/api/events', async (_req, res) => {
       eventImageDescription: r.eventImageDescription,
     };
   }));
+});
+
+app.post('/api/events', requireAuth, requireCapability('event:create'), async (req, res) => {
+  const parsed = createEventInputSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
+  }
+  const payload = parsed.data;
+  const eventTypeId = payload.eventTypeId ? toObjectId(payload.eventTypeId) : undefined;
+  if (payload.eventTypeId && !eventTypeId) {
+    return res.status(400).json({ error: 'Invalid eventTypeId' });
+  }
+
+  const toDate = (value: string): Date => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      throw new Error(`Invalid date value: ${value}`);
+    }
+    return date;
+  };
+
+  try {
+    const createdEvent = await Event.create({
+      title: payload.title,
+      status: payload.status || 'Open',
+      location: payload.location,
+      capacity: typeof payload.capacity === 'number' ? payload.capacity : undefined,
+      waitlistEnabled: payload.waitlistEnabled ?? false,
+      requiresApproval: payload.requiresApproval ?? false,
+      eventTypeId,
+      eventImageUrl: payload.eventImageUrl,
+      eventImageDescription: payload.eventImageDescription,
+      slotsBooked: 0,
+    });
+
+    let createdSessions: any[] = [];
+    if (payload.sessions && payload.sessions.length > 0) {
+      const sessionDocs = payload.sessions.map((session) => ({
+        eventId: createdEvent._id,
+        title: session.title,
+        startDateTime: toDate(session.startDateTime),
+        endDateTime: toDate(session.endDateTime),
+        status: session.status || 'Open',
+        sessionCapacity: session.sessionCapacity,
+        capacityOverride: session.capacityOverride,
+        details: session.details,
+        slotsBooked: 0,
+      }));
+      createdSessions = await Session.insertMany(sessionDocs);
+    }
+
+    const eventResponse = serializeEvent(createdEvent.toObject());
+    const sessionResponse = createdSessions.map(doc => serializeSession(doc));
+    return res.status(201).json({ event: eventResponse, sessions: sessionResponse });
+  } catch (err: any) {
+    // eslint-disable-next-line no-console
+    console.error('Failed to create event', err);
+    if (err?.name === 'ValidationError') {
+      return res.status(400).json({ error: err.message });
+    }
+    return res.status(500).json({ error: 'Failed to create event' });
+  }
 });
 
 app.get('/api/sessions', async (_req, res) => {

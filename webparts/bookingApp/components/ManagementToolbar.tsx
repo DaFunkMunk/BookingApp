@@ -32,9 +32,10 @@ const noop = (label: string) => () => {
 
 type ManagementToolbarProps = {
   className?: string;
+  onAction?: (capability: string, label: string) => void;
 };
 
-const ManagementToolbar = ({ className }: ManagementToolbarProps): JSX.Element | null => {
+const ManagementToolbar = ({ className, onAction }: ManagementToolbarProps): JSX.Element | null => {
   const { hasCapability } = useCapabilities();
 
   const visiblePrimary = React.useMemo(
@@ -56,12 +57,19 @@ const ManagementToolbar = ({ className }: ManagementToolbarProps): JSX.Element |
       {actions.map((action) => {
         const baseClass =
           action.variant === 'primary' ? styles.btnPrimary : styles.btnGhost;
+        const handleClick = () => {
+          if (onAction) {
+            onAction(action.capability, action.label);
+          } else {
+            noop(action.label)();
+          }
+        };
         return (
           <button
             key={action.capability}
             type="button"
             className={`${baseClass} ${styles.toolbarButton}`}
-            onClick={noop(action.label)}
+            onClick={handleClick}
             title="Feature scaffolding complete – wire up action when ready."
           >
             {action.label}

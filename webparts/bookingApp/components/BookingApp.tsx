@@ -102,6 +102,18 @@ type EventWithTypeId = SpEventItem & {
   EventImageDescription?: string;
 };
 
+type CreateEventFormValues = {
+  title: string;
+  status?: string;
+  location?: string;
+  capacity?: number;
+  eventTypeId?: string;
+  waitlistEnabled: boolean;
+  requiresApproval: boolean;
+  imageFile?: File;
+  imageDescription?: string;
+};
+
 type AuthState =
   | { status: 'not-required' }
   | { status: 'loading' }
