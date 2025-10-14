@@ -12,8 +12,9 @@ import AvailableEvents, {
 } from './AvailableEvents';
 import EventDetails from './EventDetails';
 import ManagementToolbar from './ManagementToolbar';
+import AddEventModal, { AddEventFormValues } from './AddEventModal';
 import reservationsApi from '../services/reservationsApi';
-import type { IDataProvider } from '../services/dataProvider';
+import type { IDataProvider, CreateEventInput } from '../services/dataProvider';
 import HttpDataProvider from '../services/httpDataProvider';
 import authClient, { loadStoredAuth, storeAuth, type AuthSession } from '../services/authClient';
 import { CapabilityProvider } from '../services/capabilityContext';
@@ -100,18 +101,6 @@ type EventWithTypeId = SpEventItem & {
   EventType?: { Title?: string };
   EventImageUrl?: string;
   EventImageDescription?: string;
-};
-
-type CreateEventFormValues = {
-  title: string;
-  status?: string;
-  location?: string;
-  capacity?: number;
-  eventTypeId?: string;
-  waitlistEnabled: boolean;
-  requiresApproval: boolean;
-  imageFile?: File;
-  imageDescription?: string;
 };
 
 type AuthState =
@@ -370,6 +359,8 @@ export default function BookingApp({
 
   const [sessionStatusOverrides, setSessionStatusOverrides] = useState<Record<number, string>>({});
   const [userReservations, setUserReservations] = useState<UserReservationForConflict[]>([]);
+  const [isAddEventOpen, setIsAddEventOpen] = useState(false);
+  const [addEventSubmitting, setAddEventSubmitting] = useState(false);
 
   // When using the IDataProvider (Mongo-backed API), map string IDs to numeric
   const [eventIdFromStr] = useState(() => new Map<string, number>());
@@ -525,6 +516,181 @@ export default function BookingApp({
       )
     );
   }, []);
+
+  const handleToolbarAction = useCallback(
+    (capability: string, label: string) => {
+      const key = capability.trim().toLowerCase();
+      if (key === 'event:create') {
+        if (!getProvider) {
+          // eslint-disable-next-line no-console
+          console.warn('[management] Event creation is only available when connected to the API.');
+          return;
+        }
+        setIsAddEventOpen(true);
+        return;
+      }
+      // eslint-disable-next-line no-console
+      console.info(`[management] '${label}' (${capability}) triggered - handler not wired yet.`);
+    },
+    [getProvider]
+  );
+
+  const handleCloseAddEvent = useCallback(() => {
+    if (addEventSubmitting) return;
+    setIsAddEventOpen(false);
+  }, [addEventSubmitting]);
+
+  const handleAddEventSubmit = useCallback(
+    async (values: AddEventFormValues): Promise<void> => {
+      if (!getProvider) {
+        throw new Error('API connection is not available. Please sign in and try again.');
+      }
+
+      setAddEventSubmitting(true);
+      try {
+        let uploadedImageUrl: string | undefined;
+
+        if (values.imageFile) {
+          const signature = await getProvider.createUploadSignature();
+          const formData = new FormData();
+          formData.append('file', values.imageFile);
+          formData.append('api_key', signature.apiKey);
+          formData.append('timestamp', String(signature.timestamp));
+          formData.append('signature', signature.signature);
+          if (signature.folder) {
+            formData.append('folder', signature.folder);
+          }
+
+          const uploadEndpoint = `https://api.cloudinary.com/v1_1/${signature.cloudName}/image/upload`;
+          const uploadResponse = await fetch(uploadEndpoint, {
+            method: 'POST',
+            body: formData,
+          });
+          if (!uploadResponse.ok) {
+            const errorText = await uploadResponse.text().catch(() => '');
+            throw new Error(errorText || 'Image upload failed.');
+          }
+          const uploadJson: { secure_url?: string; url?: string } = await uploadResponse.json();
+          uploadedImageUrl = uploadJson.secure_url || uploadJson.url;
+          if (!uploadedImageUrl) {
+            throw new Error('Image upload failed: missing URL.');
+          }
+        }
+
+        const trimmedStatus = values.status.trim();
+        const trimmedLocation = values.location.trim();
+        const trimmedImageDescription = values.imageDescription.trim();
+        const eventTypeIdInput = values.eventTypeId?.trim();
+
+        const payload: CreateEventInput = {
+          title: values.title.trim(),
+          status: trimmedStatus || undefined,
+          location: trimmedLocation || undefined,
+          waitlistEnabled: values.waitlistEnabled,
+          requiresApproval: values.requiresApproval,
+        };
+
+        if (typeof values.capacity === 'number' && Number.isFinite(values.capacity)) {
+          payload.capacity = values.capacity;
+        }
+        if (eventTypeIdInput) {
+          payload.eventTypeId = eventTypeIdInput;
+        }
+        if (uploadedImageUrl) {
+          payload.eventImageUrl = uploadedImageUrl;
+        }
+        if (trimmedImageDescription) {
+          payload.eventImageDescription = trimmedImageDescription;
+        }
+
+        const result = await getProvider.createEvent(payload);
+        const createdEvent = result.event;
+        const eventIdStr = String(createdEvent._id);
+        const eventNumericId = registerId('event', eventIdStr);
+        const eventTypeIdStr = createdEvent.eventTypeId
+          ? String(createdEvent.eventTypeId)
+          : eventTypeIdInput || undefined;
+
+        const eventTypeTitle =
+          (createdEvent.eventType &&
+            typeof createdEvent.eventType === 'object' &&
+            'Title' in createdEvent.eventType &&
+            typeof (createdEvent.eventType as { Title?: string }).Title === 'string'
+            ? (createdEvent.eventType as { Title: string }).Title
+            : undefined) ??
+          (createdEvent.eventType &&
+          typeof createdEvent.eventType === 'object' &&
+          'title' in createdEvent.eventType &&
+          typeof (createdEvent.eventType as { title?: string }).title === 'string'
+            ? (createdEvent.eventType as { title: string }).title
+            : undefined) ??
+          (eventTypeIdStr ? types.find((option) => option.id === eventTypeIdStr)?.text : undefined);
+
+        const mappedEvent: EventWithTypeId = {
+          Id: eventNumericId,
+          Title: createdEvent.title,
+          Status: createdEvent.status,
+          Location: createdEvent.location,
+          Capacity: createdEvent.capacity,
+          SlotsBooked:
+            typeof createdEvent.slotsBooked === 'number' ? createdEvent.slotsBooked : 0,
+          WaitlistEnabled: createdEvent.waitlistEnabled,
+          RequiresApproval: createdEvent.requiresApproval,
+          EventType: eventTypeTitle ? { Title: eventTypeTitle } : undefined,
+          EventTypeId: eventTypeIdStr,
+          EventImageUrl: createdEvent.eventImageUrl,
+          EventImageDescription: createdEvent.eventImageDescription,
+        };
+
+        setEvents((prev) => {
+          const filtered = prev.filter((event) => event.Id !== mappedEvent.Id);
+          const next = [...filtered, mappedEvent];
+          next.sort((a, b) => a.Title.localeCompare(b.Title, undefined, { sensitivity: 'base' }));
+          return next;
+        });
+
+        let firstSessionId: number | undefined;
+        if (Array.isArray(result.sessions) && result.sessions.length > 0) {
+          const mappedSessions: SpSessionItem[] = result.sessions.map((session) => {
+            const sessionIdStr = String(session._id);
+            const sessionNumericId = registerId('session', sessionIdStr);
+            if (firstSessionId === undefined) {
+              firstSessionId = sessionNumericId;
+            }
+            const sessionEventId = session.eventId
+              ? registerId('event', String(session.eventId))
+              : eventNumericId;
+            return {
+              Id: sessionNumericId,
+              Title: session.title,
+              StartDateTime: session.startDateTime,
+              EndDateTime: session.endDateTime,
+              Status: session.status,
+              EventId: sessionEventId,
+              SessionCapacity: session.sessionCapacity,
+              CapacityOverride: session.capacityOverride,
+              SlotsBooked: session.slotsBooked,
+              Details: session.details,
+            };
+          });
+          setSessions((prev) => [...prev, ...mappedSessions]);
+        }
+
+        setSelectedEventId(eventNumericId);
+        setSelectedSessionId(firstSessionId);
+        setEventId(String(eventNumericId));
+        setEventTypeId(eventTypeIdStr ?? '');
+        setIsAddEventOpen(false);
+      } finally {
+        setAddEventSubmitting(false);
+      }
+    },
+    [
+      getProvider,
+      types,
+      registerId,
+    ]
+  );
 
   const availabilityDropdownOptions: IDropdownOption[] = useMemo(
     () =>
@@ -1049,6 +1215,8 @@ export default function BookingApp({
     return opts;
   }, [events, eventTypeId]);
 
+  const addEventTypeOptions = useMemo<Option[]>(() => types.filter((option) => option.id), [types]);
+
   function handleReset(): void {
     setEventTypeId('');
     setEventId('');
@@ -1321,7 +1489,7 @@ export default function BookingApp({
           <button type="button" className={styles.btnGhost} onClick={handleReset}>
             Reset
           </button>
-          <ManagementToolbar className={styles.managementToolbarInline} />
+          <ManagementToolbar className={styles.managementToolbarInline} onAction={handleToolbarAction} />
         </div>
       </section>
 
@@ -1370,6 +1538,13 @@ export default function BookingApp({
         </div>
       </div>
       </div>
+      <AddEventModal
+        isOpen={isAddEventOpen}
+        isSubmitting={addEventSubmitting}
+        eventTypeOptions={addEventTypeOptions}
+        onSubmit={handleAddEventSubmit}
+        onDismiss={handleCloseAddEvent}
+      />
     </CapabilityProvider>
   );
 }
