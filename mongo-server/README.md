@@ -25,6 +25,10 @@ Quick start (local)
 2) Set env vars (e.g., `.env`):
    - `PORT=4000`
    - `MONGODB_URI=mongodb://127.0.0.1:27017/bookingapp`
+   - `CLOUDINARY_CLOUD_NAME=your_cloud_name`
+   - `CLOUDINARY_API_KEY=your_api_key`
+   - `CLOUDINARY_API_SECRET=your_api_secret`
+   - `CLOUDINARY_UPLOAD_FOLDER=bookingapp/events` *(optional; defaults to the same value if omitted)*
 3) Run the server (adjust paths if needed):
    - `npx ts-node src/mongo-server/server.ts`
 
@@ -42,6 +46,8 @@ Optional: enable HTTPS (avoid mixed-content in browsers)
   - `http://localhost:4000`
   - `https://localhost:4001`
 
+Utility scripts
+- `npm run update:event-images` updates any events that still reference the removed `/images/...` placeholders, replacing them with the Cloudinary URLs configured in `mongo-server/scripts/updateEventImages.ts`. Adjust the mappings in that script if you change event titles or need to seed additional defaults.
 
 Production
 - Use MongoDB Atlas or a managed MongoDB.

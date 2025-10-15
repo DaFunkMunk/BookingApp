@@ -12,7 +12,7 @@ import AvailableEvents, {
 } from './AvailableEvents';
 import EventDetails from './EventDetails';
 import ManagementToolbar from './ManagementToolbar';
-import AddEventModal, { AddEventFormValues } from './AddEventModal';
+import AddEventModal, { AddEventFormValues, SessionFormValues } from './AddEventModal';
 import reservationsApi from '../services/reservationsApi';
 import type { IDataProvider, CreateEventInput } from '../services/dataProvider';
 import HttpDataProvider from '../services/httpDataProvider';
@@ -541,7 +541,7 @@ export default function BookingApp({
   }, [addEventSubmitting]);
 
   const handleAddEventSubmit = useCallback(
-    async (values: AddEventFormValues): Promise<void> => {
+    async (values: AddEventFormValues & { sessions: SessionFormValues[] }): Promise<void> => {
       if (!getProvider) {
         throw new Error('API connection is not available. Please sign in and try again.');
       }
@@ -601,6 +601,23 @@ export default function BookingApp({
         }
         if (trimmedImageDescription) {
           payload.eventImageDescription = trimmedImageDescription;
+        }
+
+        const sessionPayload =
+          Array.isArray(values.sessions) && values.sessions.length > 0
+            ? values.sessions.map((session) => ({
+                title: session.title.trim(),
+                startDateTime: session.startDateTime,
+                endDateTime: session.endDateTime,
+                status: 'Open',
+                sessionCapacity:
+                  typeof session.sessionCapacity === 'number' ? session.sessionCapacity : undefined,
+                details: session.details ? session.details.trim() || undefined : undefined,
+              }))
+            : [];
+
+        if (sessionPayload.length > 0) {
+          payload.sessions = sessionPayload;
         }
 
         const result = await getProvider.createEvent(payload);

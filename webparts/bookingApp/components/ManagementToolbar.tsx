@@ -10,7 +10,6 @@ type ToolbarAction = {
 
 const PRIMARY_ACTIONS: ToolbarAction[] = [
   { capability: 'event:create', label: 'Add Event', variant: 'primary' },
-  { capability: 'session:create', label: 'Add Session', variant: 'primary' },
   { capability: 'user:manage', label: 'Manage Users', variant: 'ghost' },
   { capability: 'appearance:update', label: 'Appearance', variant: 'ghost' },
   { capability: 'reports:view', label: 'Reports', variant: 'ghost' },
@@ -27,7 +26,7 @@ const SECONDARY_ACTIONS: ToolbarAction[] = [
 const noop = (label: string) => () => {
   // placeholder handler for future implementation
   // eslint-disable-next-line no-console
-  console.info(`[RBAC] '${label}' triggered – wire up handler when feature is implemented.`);
+  console.info(`[RBAC] '${label}' triggered - wire up handler when feature is implemented.`);
 };
 
 type ManagementToolbarProps = {
@@ -70,7 +69,7 @@ const ManagementToolbar = ({ className, onAction }: ManagementToolbarProps): JSX
             type="button"
             className={`${baseClass} ${styles.toolbarButton}`}
             onClick={handleClick}
-            title="Feature scaffolding complete – wire up action when ready."
+            title="Feature scaffolding complete - wire up action when ready."
           >
             {action.label}
           </button>

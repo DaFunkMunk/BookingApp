@@ -10,6 +10,7 @@
     "dev:all": "concurrently \"npm run dev:api\" \"npm run dev:ui\"",
     "dev": "npm run dev:all",
     "seed": "ts-node mongo-server/seed.ts",
+    "update:event-images": "ts-node mongo-server/scripts/updateEventImages.ts",
     "build:api": "tsc -p tsconfig.server.json",
     "build": "npm run build:api",
     "start": "node dist/server.js"

@@ -27,6 +27,15 @@ export type CreateEventInput = {
   eventTypeId?: string;
   eventImageUrl?: string;
   eventImageDescription?: string;
+  sessions?: Array<{
+    title: string;
+    startDateTime: string;
+    endDateTime: string;
+    status?: string;
+    sessionCapacity?: number;
+    capacityOverride?: number;
+    details?: string;
+  }>;
 };
 
 export type CreateEventResponse = {
