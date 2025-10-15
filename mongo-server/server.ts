@@ -587,6 +587,24 @@ const createEventInputSchema = z.object({
     .optional(),
 });
 
+const updateEventInputSchema = z.object({
+  title: z.string().trim().min(1).optional(),
+  status: z.string().trim().optional(),
+  location: z.string().trim().optional(),
+  capacity: z.number().int().nonnegative().nullable().optional(),
+  waitlistEnabled: z.boolean().optional(),
+  requiresApproval: z.boolean().optional(),
+  eventTypeId: z.string().trim().nullable().optional(),
+});
+
+const updateSessionInputSchema = z.object({
+  title: z.string().trim().min(1).optional(),
+  startDateTime: z.string().trim().optional(),
+  endDateTime: z.string().trim().optional(),
+  sessionCapacity: z.number().int().nonnegative().nullable().optional(),
+  details: z.string().trim().optional(),
+});
+
 // --- Routes ---
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
@@ -799,6 +817,105 @@ app.post('/api/events', requireAuth, requireCapability('event:create'), async (r
   }
 });
 
+app.put('/api/events/:id', requireAuth, requireCapability('event:create'), async (req, res) => {
+  const id = toObjectId(req.params.id);
+  if (!id) {
+    return res.status(400).json({ error: 'Invalid event id' });
+  }
+  const parsed = updateEventInputSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
+  }
+  const payload = parsed.data;
+  const hasAnyField = Object.keys(payload).length > 0;
+  if (!hasAnyField) {
+    return res.status(400).json({ error: 'No changes supplied' });
+  }
+
+  const set: Record<string, unknown> = {};
+  const unset: Record<string, ''> = {};
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'title')) {
+    const title = payload.title?.trim();
+    if (title) set.title = title;
+    else return res.status(400).json({ error: 'Title cannot be empty' });
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'status')) {
+    const status = payload.status?.trim();
+    if (status) set.status = status;
+    else unset.status = '';
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'location')) {
+    const location = payload.location?.trim();
+    if (location) set.location = location;
+    else unset.location = '';
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'capacity')) {
+    if (typeof payload.capacity === 'number' && Number.isFinite(payload.capacity)) {
+      set.capacity = payload.capacity;
+    } else {
+      unset.capacity = '';
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'waitlistEnabled')) {
+    set.waitlistEnabled = payload.waitlistEnabled ?? false;
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'requiresApproval')) {
+    set.requiresApproval = payload.requiresApproval ?? false;
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'eventTypeId')) {
+    const raw = payload.eventTypeId ? String(payload.eventTypeId).trim() : '';
+    if (!raw) {
+      unset.eventTypeId = '';
+    } else {
+      const eventTypeId = toObjectId(raw);
+      if (!eventTypeId) {
+        return res.status(400).json({ error: 'Invalid eventTypeId' });
+      }
+      set.eventTypeId = eventTypeId;
+    }
+  }
+
+  if (Object.keys(set).length === 0 && Object.keys(unset).length === 0) {
+    return res.status(400).json({ error: 'No valid changes supplied' });
+  }
+
+  const update: Record<string, unknown> = {};
+  if (Object.keys(set).length > 0) update.$set = set;
+  if (Object.keys(unset).length > 0) update.$unset = unset;
+
+  const updated = await Event.findByIdAndUpdate(id, update, {
+    new: true,
+    runValidators: true,
+  })
+    .populate({ path: 'eventTypeId', select: 'title' })
+    .lean();
+  if (!updated) {
+    return res.status(404).json({ error: 'Event not found' });
+  }
+  return res.json({ event: serializeEvent(updated) });
+});
+
+app.delete('/api/events/:id', requireAuth, requireCapability('event:create'), async (req, res) => {
+  const id = toObjectId(req.params.id);
+
+  if (!id) {
+    return res.status(400).json({ error: 'Invalid event id' });
+  }
+  const sessionIds = await Session.find({ eventId: id }).distinct('_id');
+  const deleted = await Event.findByIdAndDelete(id);
+  if (!deleted) {
+    return res.status(404).json({ error: 'Event not found' });
+  }
+  if (sessionIds.length > 0) {
+    await Session.deleteMany({ _id: { $in: sessionIds } });
+    await Reservation.deleteMany({ eventId: id });
+  } else {
+    await Reservation.deleteMany({ eventId: id });
+  }
+  return res.json({ ok: true });
+});
+
 app.get('/api/sessions', async (_req, res) => {
   const rows = await Session.find().sort({ startDateTime: 1 }).lean();
   res.json(rows.map(r => ({
@@ -813,6 +930,87 @@ app.get('/api/sessions', async (_req, res) => {
     slotsBooked: r.slotsBooked,
     details: r.details,
   })));
+});
+
+app.put('/api/sessions/:id', requireAuth, requireCapability('event:create'), async (req, res) => {
+  const id = toObjectId(req.params.id);
+  if (!id) {
+    return res.status(400).json({ error: 'Invalid session id' });
+  }
+  const parsed = updateSessionInputSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
+  }
+  const payload = parsed.data;
+  if (Object.keys(payload).length === 0) {
+    return res.status(400).json({ error: 'No changes supplied' });
+  }
+  const set: Record<string, unknown> = {};
+  const unset: Record<string, ''> = {};
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'title')) {
+    const title = payload.title?.trim();
+    if (!title) return res.status(400).json({ error: 'Title cannot be empty' });
+    set.title = title;
+  }
+  const toDate = (value?: string | null): Date | undefined => {
+    if (!value) return undefined;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return undefined;
+    return date;
+  };
+  if (Object.prototype.hasOwnProperty.call(payload, 'startDateTime')) {
+    const date = toDate(payload.startDateTime);
+    if (!date) return res.status(400).json({ error: 'Invalid startDateTime' });
+    set.startDateTime = date;
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'endDateTime')) {
+    const date = toDate(payload.endDateTime);
+    if (!date) return res.status(400).json({ error: 'Invalid endDateTime' });
+    set.endDateTime = date;
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'sessionCapacity')) {
+    if (typeof payload.sessionCapacity === 'number' && Number.isFinite(payload.sessionCapacity)) {
+      set.sessionCapacity = payload.sessionCapacity;
+    } else {
+      unset.sessionCapacity = '';
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'details')) {
+    const details = payload.details?.trim();
+    if (details) set.details = details;
+    else unset.details = '';
+  }
+
+  if (Object.keys(set).length === 0 && Object.keys(unset).length === 0) {
+    return res.status(400).json({ error: 'No valid changes supplied' });
+  }
+
+  const update: Record<string, unknown> = {};
+  if (Object.keys(set).length > 0) update.$set = set;
+  if (Object.keys(unset).length > 0) update.$unset = unset;
+
+  const updated = await Session.findByIdAndUpdate(id, update, {
+    new: true,
+    runValidators: true,
+  }).lean();
+  if (!updated) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+  return res.json({ session: serializeSession(updated) });
+});
+
+app.delete('/api/sessions/:id', requireAuth, requireCapability('event:create'), async (req, res) => {
+  const id = toObjectId(req.params.id);
+  if (!id) {
+    return res.status(400).json({ error: 'Invalid session id' });
+  }
+  const deleted = await Session.findByIdAndDelete(id).lean();
+  if (!deleted) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+  await Reservation.deleteMany({ sessionId: id });
+  return res.json({ ok: true });
 });
 
 // Find reservations by uniqueKey or session, scoped to the authenticated user

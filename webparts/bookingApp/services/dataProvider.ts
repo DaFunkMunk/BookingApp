@@ -64,6 +64,24 @@ export type SessionItem = {
   details?: string;
 };
 
+export type UpdateEventInput = {
+  title?: string;
+  status?: string;
+  location?: string;
+  capacity?: number;
+  waitlistEnabled?: boolean;
+  requiresApproval?: boolean;
+  eventTypeId?: string;
+};
+
+export type UpdateSessionInput = {
+  title?: string;
+  startDateTime?: string;
+  endDateTime?: string;
+  sessionCapacity?: number;
+  details?: string;
+};
+
 export type ReservationItem = {
   _id: string;
   reservationId?: string;
@@ -116,4 +134,8 @@ export interface IDataProvider {
 
   createEvent(input: CreateEventInput): Promise<CreateEventResponse>;
   createUploadSignature(): Promise<UploadSignatureResponse>;
+  updateEvent(id: string, input: UpdateEventInput): Promise<EventItem>;
+  deleteEvent(id: string): Promise<void>;
+  updateSession(id: string, input: UpdateSessionInput): Promise<SessionItem>;
+  deleteSession(id: string): Promise<void>;
 }

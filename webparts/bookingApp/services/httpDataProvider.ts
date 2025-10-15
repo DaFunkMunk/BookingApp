@@ -8,6 +8,8 @@ import {
   CreateEventInput,
   CreateEventResponse,
   UploadSignatureResponse,
+  UpdateEventInput,
+  UpdateSessionInput,
 } from './dataProvider';
 
 export class HttpDataProvider implements IDataProvider {
@@ -199,6 +201,46 @@ export class HttpDataProvider implements IDataProvider {
     };
   }
 
+  async updateEvent(id: string, input: UpdateEventInput): Promise<EventItem> {
+    const body = JSON.stringify(input);
+    const result = await this.send<{ event: EventItem }>(`/api/events/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body,
+    });
+    return HttpDataProvider.mapEvent(result.event);
+  }
+
+  async deleteEvent(id: string): Promise<void> {
+    const res = await fetch(this.url(`/api/events/${encodeURIComponent(id)}`), {
+      method: 'DELETE',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) {
+      const msg = await res.text().catch(() => '');
+      throw new Error(msg || `DELETE /api/events/${id} failed: ${res.status}`);
+    }
+  }
+
+  async updateSession(id: string, input: UpdateSessionInput): Promise<SessionItem> {
+    const body = JSON.stringify(input);
+    const result = await this.send<{ session: SessionItem }>(`/api/sessions/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body,
+    });
+    return HttpDataProvider.mapSessionItem(result.session);
+  }
+
+  async deleteSession(id: string): Promise<void> {
+    const res = await fetch(this.url(`/api/sessions/${encodeURIComponent(id)}`), {
+      method: 'DELETE',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) {
+      const msg = await res.text().catch(() => '');
+      throw new Error(msg || `DELETE /api/sessions/${id} failed: ${res.status}`);
+    }
+  }
+
   async createUploadSignature(): Promise<UploadSignatureResponse> {
     return this.send<UploadSignatureResponse>('/api/uploads/signature', {
       method: 'POST',
@@ -208,3 +250,6 @@ export class HttpDataProvider implements IDataProvider {
 }
 
 export default HttpDataProvider;
+
+
+

@@ -12,7 +12,7 @@ import AvailableEvents, {
 } from './AvailableEvents';
 import EventDetails from './EventDetails';
 import ManagementToolbar from './ManagementToolbar';
-import AddEventModal, { AddEventFormValues, SessionFormValues } from './AddEventModal';
+import ScheduleManagerModal, { ScheduleCreateFormValues, ScheduleSessionFormValues, ManagedScheduleEvent, ScheduleManagerChangeSet } from './ScheduleManagerModal';
 import reservationsApi from '../services/reservationsApi';
 import type { IDataProvider, CreateEventInput } from '../services/dataProvider';
 import HttpDataProvider from '../services/httpDataProvider';
@@ -359,8 +359,9 @@ export default function BookingApp({
 
   const [sessionStatusOverrides, setSessionStatusOverrides] = useState<Record<number, string>>({});
   const [userReservations, setUserReservations] = useState<UserReservationForConflict[]>([]);
-  const [isAddEventOpen, setIsAddEventOpen] = useState(false);
-  const [addEventSubmitting, setAddEventSubmitting] = useState(false);
+  const [isScheduleManagerOpen, setIsScheduleManagerOpen] = useState(false);
+  const [scheduleManagerSubmitting, setScheduleManagerSubmitting] = useState(false);
+  const [dataReloadKey, setDataReloadKey] = useState(0);
 
   // When using the IDataProvider (Mongo-backed API), map string IDs to numeric
   const [eventIdFromStr] = useState(() => new Map<string, number>());
@@ -526,7 +527,7 @@ export default function BookingApp({
           console.warn('[management] Event creation is only available when connected to the API.');
           return;
         }
-        setIsAddEventOpen(true);
+        setIsScheduleManagerOpen(true);
         return;
       }
       // eslint-disable-next-line no-console
@@ -535,18 +536,18 @@ export default function BookingApp({
     [getProvider]
   );
 
-  const handleCloseAddEvent = useCallback(() => {
-    if (addEventSubmitting) return;
-    setIsAddEventOpen(false);
-  }, [addEventSubmitting]);
+  const handleCloseScheduleManager = useCallback(() => {
+    if (scheduleManagerSubmitting) return;
+    setIsScheduleManagerOpen(false);
+  }, [scheduleManagerSubmitting]);
 
-  const handleAddEventSubmit = useCallback(
-    async (values: AddEventFormValues & { sessions: SessionFormValues[] }): Promise<void> => {
+  const handleCreateSchedule = useCallback(
+    async (values: ScheduleCreateFormValues & { sessions: ScheduleSessionFormValues[] }): Promise<void> => {
       if (!getProvider) {
         throw new Error('API connection is not available. Please sign in and try again.');
       }
 
-      setAddEventSubmitting(true);
+      setScheduleManagerSubmitting(true);
       try {
         let uploadedImageUrl: string | undefined;
 
@@ -697,16 +698,39 @@ export default function BookingApp({
         setSelectedSessionId(firstSessionId);
         setEventId(String(eventNumericId));
         setEventTypeId(eventTypeIdStr ?? '');
-        setIsAddEventOpen(false);
+        setIsScheduleManagerOpen(false);
       } finally {
-        setAddEventSubmitting(false);
+        setScheduleManagerSubmitting(false);
       }
     },
-    [
-      getProvider,
-      types,
-      registerId,
-    ]
+    [getProvider, types, registerId]
+  );
+
+  const handleScheduleCommit = useCallback(
+    async (changes: ScheduleManagerChangeSet): Promise<void> => {
+      if (!getProvider) {
+        throw new Error('API connection is not available. Please sign in and try again.');
+      }
+      setScheduleManagerSubmitting(true);
+      try {
+        for (const item of changes.deletedSessions) {
+          await getProvider.deleteSession(item.id);
+        }
+        for (const item of changes.deletedEvents) {
+          await getProvider.deleteEvent(item.id);
+        }
+        for (const item of changes.updatedEvents) {
+          await getProvider.updateEvent(item.id, item.data);
+        }
+        for (const item of changes.updatedSessions) {
+          await getProvider.updateSession(item.id, item.data);
+        }
+        setDataReloadKey((prev) => prev + 1);
+      } finally {
+        setScheduleManagerSubmitting(false);
+      }
+    },
+    [getProvider]
   );
 
   const availabilityDropdownOptions: IDropdownOption[] = useMemo(
@@ -1032,7 +1056,7 @@ export default function BookingApp({
     return () => {
       dead = true;
     };
-  }, [context, webUrl, getProvider, usingSharePoint]);
+  }, [context, webUrl, getProvider, usingSharePoint, dataReloadKey]);
 
   const sessionsByEventId = useMemo(() => {
     const map = new Map<number, SpSessionItem[]>();
@@ -1233,6 +1257,48 @@ export default function BookingApp({
   }, [events, eventTypeId]);
 
   const addEventTypeOptions = useMemo<Option[]>(() => types.filter((option) => option.id), [types]);
+
+  const managedEvents = useMemo<ManagedScheduleEvent[]>(() => {
+    const items: ManagedScheduleEvent[] = [];
+    for (const event of events) {
+      const backendId = eventIdToStr.get(event.Id);
+      if (!backendId) continue;
+      const sessionsForEvent = sessionsByEventId.get(event.Id) || [];
+      const managedSessions = sessionsForEvent
+        .map((session) => {
+          const sessionBackendId = sessionIdToStr.get(session.Id);
+          if (!sessionBackendId) return undefined;
+          return {
+            id: sessionBackendId,
+            numericId: session.Id,
+            session: {
+              title: session.Title || '',
+              startDateTime: session.StartDateTime,
+              endDateTime: session.EndDateTime,
+              sessionCapacity: session.SessionCapacity,
+              details: session.Details,
+            },
+          };
+        })
+        .filter((value): value is NonNullable<typeof value> => Boolean(value));
+
+      items.push({
+        id: backendId,
+        numericId: event.Id,
+        event: {
+          title: event.Title,
+          status: event.Status,
+          location: event.Location,
+          capacity: event.Capacity,
+          waitlistEnabled: event.WaitlistEnabled,
+          requiresApproval: event.RequiresApproval,
+          eventTypeId: event.EventTypeId,
+        },
+        sessions: managedSessions,
+      });
+    }
+    return items;
+  }, [events, sessionsByEventId, eventIdToStr, sessionIdToStr]);
 
   function handleReset(): void {
     setEventTypeId('');
@@ -1555,16 +1621,20 @@ export default function BookingApp({
         </div>
       </div>
       </div>
-      <AddEventModal
-        isOpen={isAddEventOpen}
-        isSubmitting={addEventSubmitting}
+      <ScheduleManagerModal
+        isOpen={isScheduleManagerOpen}
+        isSubmitting={scheduleManagerSubmitting}
         eventTypeOptions={addEventTypeOptions}
-        onSubmit={handleAddEventSubmit}
-        onDismiss={handleCloseAddEvent}
+        onSubmit={handleCreateSchedule}
+        onDismiss={handleCloseScheduleManager}
+        managedEvents={managedEvents}
+        onCommit={handleScheduleCommit}
       />
     </CapabilityProvider>
   );
 }
+
+
 
 
 

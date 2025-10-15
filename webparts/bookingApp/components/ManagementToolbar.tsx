@@ -9,7 +9,7 @@ type ToolbarAction = {
 };
 
 const PRIMARY_ACTIONS: ToolbarAction[] = [
-  { capability: 'event:create', label: 'Add Event', variant: 'primary' },
+  { capability: 'event:create', label: 'Schedule Manager', variant: 'primary' },
   { capability: 'user:manage', label: 'Manage Users', variant: 'ghost' },
   { capability: 'appearance:update', label: 'Appearance', variant: 'ghost' },
   { capability: 'reports:view', label: 'Reports', variant: 'ghost' },
