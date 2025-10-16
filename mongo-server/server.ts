@@ -595,6 +595,8 @@ const updateEventInputSchema = z.object({
   waitlistEnabled: z.boolean().optional(),
   requiresApproval: z.boolean().optional(),
   eventTypeId: z.string().trim().nullable().optional(),
+  eventImageUrl: z.string().trim().url().nullable().optional(),
+  eventImageDescription: z.string().trim().nullable().optional(),
 });
 
 const updateSessionInputSchema = z.object({
@@ -603,6 +605,15 @@ const updateSessionInputSchema = z.object({
   endDateTime: z.string().trim().optional(),
   sessionCapacity: z.number().int().nonnegative().nullable().optional(),
   details: z.string().trim().optional(),
+});
+
+const createSessionInputSchema = z.object({
+  title: z.string().trim().min(1),
+  startDateTime: z.string().trim(),
+  endDateTime: z.string().trim(),
+  sessionCapacity: z.number().int().nonnegative().optional(),
+  details: z.string().trim().optional(),
+  status: z.string().trim().optional(),
 });
 
 // --- Routes ---
@@ -875,6 +886,27 @@ app.put('/api/events/:id', requireAuth, requireCapability('event:create'), async
       set.eventTypeId = eventTypeId;
     }
   }
+  if (Object.prototype.hasOwnProperty.call(payload, 'eventImageUrl')) {
+    const rawUrl = payload.eventImageUrl;
+    if (rawUrl === null) {
+      unset.eventImageUrl = '';
+    } else if (typeof rawUrl === 'string') {
+      const trimmed = rawUrl.trim();
+      if (trimmed) {
+        set.eventImageUrl = trimmed;
+      } else {
+        unset.eventImageUrl = '';
+      }
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'eventImageDescription')) {
+    const rawDescription = payload.eventImageDescription;
+    if (rawDescription === null) {
+      unset.eventImageDescription = '';
+    } else if (typeof rawDescription === 'string') {
+      set.eventImageDescription = rawDescription.trim();
+    }
+  }
 
   if (Object.keys(set).length === 0 && Object.keys(unset).length === 0) {
     return res.status(400).json({ error: 'No valid changes supplied' });
@@ -930,6 +962,50 @@ app.get('/api/sessions', async (_req, res) => {
     slotsBooked: r.slotsBooked,
     details: r.details,
   })));
+});
+
+app.post('/api/events/:id/sessions', requireAuth, requireCapability('event:create'), async (req, res) => {
+  const eventId = toObjectId(req.params.id);
+  if (!eventId) {
+    return res.status(400).json({ error: 'Invalid event id' });
+  }
+  const parsed = createSessionInputSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
+  }
+  const payload = parsed.data;
+  const eventExists = await Event.exists({ _id: eventId });
+  if (!eventExists) {
+    return res.status(404).json({ error: 'Event not found' });
+  }
+  const startDate = new Date(payload.startDateTime);
+  const endDate = new Date(payload.endDateTime);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+    return res.status(400).json({ error: 'Session times must be valid ISO dates' });
+  }
+  if (endDate <= startDate) {
+    return res.status(400).json({ error: 'endDateTime must be after startDateTime' });
+  }
+  const sessionCapacity =
+    typeof payload.sessionCapacity === 'number' && Number.isFinite(payload.sessionCapacity)
+      ? payload.sessionCapacity
+      : undefined;
+  const details = payload.details ? payload.details.trim() : undefined;
+  try {
+    const created = await Session.create({
+      eventId,
+      title: payload.title,
+      startDateTime: startDate,
+      endDateTime: endDate,
+      status: payload.status && payload.status.trim() ? payload.status.trim() : 'Open',
+      sessionCapacity,
+      details: details && details.length > 0 ? details : undefined,
+      slotsBooked: 0,
+    });
+    return res.status(201).json({ session: serializeSession(created.toObject()) });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to create session' });
+  }
 });
 
 app.put('/api/sessions/:id', requireAuth, requireCapability('event:create'), async (req, res) => {

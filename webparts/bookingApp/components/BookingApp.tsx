@@ -14,7 +14,7 @@ import EventDetails from './EventDetails';
 import ManagementToolbar from './ManagementToolbar';
 import ScheduleManagerModal, { ScheduleCreateFormValues, ScheduleSessionFormValues, ManagedScheduleEvent, ScheduleManagerChangeSet } from './ScheduleManagerModal';
 import reservationsApi from '../services/reservationsApi';
-import type { IDataProvider, CreateEventInput } from '../services/dataProvider';
+import type { IDataProvider, CreateEventInput, UpdateEventInput } from '../services/dataProvider';
 import HttpDataProvider from '../services/httpDataProvider';
 import authClient, { loadStoredAuth, storeAuth, type AuthSession } from '../services/authClient';
 import { CapabilityProvider } from '../services/capabilityContext';
@@ -713,17 +713,83 @@ export default function BookingApp({
       }
       setScheduleManagerSubmitting(true);
       try {
-        for (const item of changes.deletedSessions) {
-          await getProvider.deleteSession(item.id);
+        const deletedEventIds = new Set(changes.deletedEvents.map((item) => item.id));
+        const eventUpdateMap = new Map<string, UpdateEventInput>();
+        const mergeEventUpdate = (id: string, data: UpdateEventInput) => {
+          if (deletedEventIds.has(id)) return;
+          const prev = eventUpdateMap.get(id);
+          eventUpdateMap.set(id, { ...(prev || {}), ...data });
+        };
+
+        changes.updatedEvents.forEach((item) => {
+          mergeEventUpdate(item.id, item.data);
+        });
+
+        if (Array.isArray(changes.updatedEventImages) && changes.updatedEventImages.length > 0) {
+          for (const item of changes.updatedEventImages) {
+            if (deletedEventIds.has(item.id)) continue;
+            const signature = await getProvider.createUploadSignature();
+            const formData = new FormData();
+            formData.append('file', item.file);
+            formData.append('api_key', signature.apiKey);
+            formData.append('timestamp', String(signature.timestamp));
+            formData.append('signature', signature.signature);
+            if (signature.folder) {
+              formData.append('folder', signature.folder);
+            }
+            const uploadEndpoint = `https://api.cloudinary.com/v1_1/${signature.cloudName}/image/upload`;
+            const uploadResponse = await fetch(uploadEndpoint, {
+              method: 'POST',
+              body: formData,
+            });
+            if (!uploadResponse.ok) {
+              const errorText = await uploadResponse.text().catch(() => '');
+              throw new Error(errorText || 'Image upload failed.');
+            }
+            const uploadJson: { secure_url?: string; url?: string } = await uploadResponse.json();
+            const uploadedImageUrl = uploadJson.secure_url || uploadJson.url;
+            if (!uploadedImageUrl) {
+              throw new Error('Image upload failed: missing URL.');
+            }
+            const normalizedDescription =
+              typeof item.description === 'string'
+                ? item.description.trim().length > 0
+                  ? item.description.trim()
+                  : ''
+                : undefined;
+            mergeEventUpdate(item.id, {
+              eventImageUrl: uploadedImageUrl,
+              eventImageDescription: normalizedDescription,
+            });
+          }
         }
-        for (const item of changes.deletedEvents) {
-          await getProvider.deleteEvent(item.id);
+
+        for (const session of changes.deletedSessions) {
+          await getProvider.deleteSession(session.id);
         }
-        for (const item of changes.updatedEvents) {
-          await getProvider.updateEvent(item.id, item.data);
+        for (const event of changes.deletedEvents) {
+          await getProvider.deleteEvent(event.id);
+          eventUpdateMap.delete(event.id);
         }
-        for (const item of changes.updatedSessions) {
-          await getProvider.updateSession(item.id, item.data);
+        for (const [eventId, data] of eventUpdateMap.entries()) {
+          if (Object.keys(data).length === 0) continue;
+          await getProvider.updateEvent(eventId, data);
+        }
+        if (Array.isArray(changes.createdSessions) && changes.createdSessions.length > 0) {
+          for (const item of changes.createdSessions) {
+            if (deletedEventIds.has(item.eventId)) continue;
+            await getProvider.createSession(item.eventId, {
+              title: item.data.title,
+              startDateTime: item.data.startDateTime,
+              endDateTime: item.data.endDateTime,
+              sessionCapacity: item.data.sessionCapacity,
+              details: item.data.details,
+              status: 'Open',
+            });
+          }
+        }
+        for (const session of changes.updatedSessions) {
+          await getProvider.updateSession(session.id, session.data);
         }
         setDataReloadKey((prev) => prev + 1);
       } finally {
@@ -1293,6 +1359,8 @@ export default function BookingApp({
           waitlistEnabled: event.WaitlistEnabled,
           requiresApproval: event.RequiresApproval,
           eventTypeId: event.EventTypeId,
+          eventImageUrl: event.EventImageUrl,
+          eventImageDescription: event.EventImageDescription,
         },
         sessions: managedSessions,
       });

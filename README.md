@@ -6,11 +6,11 @@ This repository hosts the BookingApp SharePoint-style front end along with a sta
 Contents
 --------
 
-- src/ – project root for both API and UI
-  - mongo-server/ – TypeScript Express server + MongoDB models
-  - standalone-app/ – Vite/React shell for running the Booking App outside SharePoint
-  - webparts/bookingApp/ – main UI components and services
-  - 	ypes/, dist/, etc. – build artifacts and shared types
+- src/ â€“ project root for both API and UI
+  - mongo-server/ â€“ TypeScript Express server + MongoDB models
+  - standalone-app/ â€“ Vite/React shell for running the Booking App outside SharePoint
+  - webparts/bookingApp/ â€“ main UI components and services
+  - 	ypes/, dist/, etc. â€“ build artifacts and shared types
 
 Quick Start
 -----------
@@ -88,24 +88,24 @@ Existing seed data can be switched from the deprecated /images/... assets to Clo
 npm run update:event-images
 `
 
-Mappings live in mongo-server/scripts/updateEventImages.ts—update that file if you add new defaults.
+Mappings live in mongo-server/scripts/updateEventImages.tsâ€”update that file if you add new defaults.
 
 Available Scripts
 -----------------
 
 - 
-pm run dev – run API and Vite UI together
+pm run dev â€“ run API and Vite UI together
 - 
 pm run dev:api / 
-pm run dev:ui – run either service individually
+pm run dev:ui â€“ run either service individually
 - 
-pm run seed – seed MongoDB
+pm run seed â€“ seed MongoDB
 - 
-pm run update:event-images – swap legacy image URLs for Cloudinary URLs
+pm run update:event-images â€“ swap legacy image URLs for Cloudinary URLs
 - 
-pm run build – compile the API (	sconfig.server.json)
+pm run build â€“ compile the API (	sconfig.server.json)
 - 
-pm run build --prefix standalone-app – production build of the standalone UI
+pm run build --prefix standalone-app â€“ production build of the standalone UI
 
 Deployment Notes
 ----------------
@@ -123,8 +123,16 @@ This README should evolve alongside the manager workflow. After major changes:
 - Document new CLI scripts or deprecations
 - Summarize key UX flows so onboarding remains quick
 
+- Dependencies button backlog (to tackle later):
+  1. **Prerequisite sessions** â€“ map out which events rely on earlier sessions, highlighting conflicts if an admin edits or removes the upstream requirement.
+  2. **Shared resources** â€“ list rooms, equipment, or presenters supporting multiple events so schedule changes reflect resource constraints.
+  3. **Automation chains** â€“ expose downstream workflows (emails, integrations, reports) tied to an event/session so updates don't break hidden processes.
+  4. **Data model links** â€“ surface references in other modules (recurrence templates, cloned schedules, analytics) that depend on the record.
+  5. **Waitlist ripple checks** â€“ show waitlist enrolments and auto-promotion rules that would trigger if capacity or status changes.
+  6. **Approval path visibility** â€“ summarize managers or policies that must approve edits/cancellations, warning when a change bypasses required sign-offs.
+
 History
 -------
 
-- **Oct 2025** – Added Cloudinary integration, inline session creation, and update script for existing images.
+- **Oct 2025** â€“ Added Cloudinary integration, inline session creation, and update script for existing images.
 

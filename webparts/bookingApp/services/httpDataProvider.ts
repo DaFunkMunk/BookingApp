@@ -10,6 +10,7 @@ import {
   UploadSignatureResponse,
   UpdateEventInput,
   UpdateSessionInput,
+  CreateSessionInput,
 } from './dataProvider';
 
 export class HttpDataProvider implements IDataProvider {
@@ -62,8 +63,8 @@ export class HttpDataProvider implements IDataProvider {
   private static mapSessionItem(item: SessionItem): SessionItem {
     return {
       ...item,
-      startDateTime: HttpDataProvider.normalizeUtcToLocal(item.startDateTime),
-      endDateTime: HttpDataProvider.normalizeUtcToLocal(item.endDateTime),
+      startDateTime: item.startDateTime ? String(item.startDateTime) : undefined,
+      endDateTime: item.endDateTime ? String(item.endDateTime) : undefined,
     };
   }
 
@@ -108,8 +109,8 @@ export class HttpDataProvider implements IDataProvider {
       ...row,
       _id: row._id,
       eventId: row.eventId,
-      startDateTime: HttpDataProvider.normalizeUtcToLocal(row.startDateTime),
-      endDateTime: HttpDataProvider.normalizeUtcToLocal(row.endDateTime),
+      startDateTime: row.startDateTime ? String(row.startDateTime) : undefined,
+      endDateTime: row.endDateTime ? String(row.endDateTime) : undefined,
       details: row.details,
     }));
   }
@@ -219,6 +220,18 @@ export class HttpDataProvider implements IDataProvider {
       const msg = await res.text().catch(() => '');
       throw new Error(msg || `DELETE /api/events/${id} failed: ${res.status}`);
     }
+  }
+
+  async createSession(eventId: string, input: CreateSessionInput): Promise<SessionItem> {
+    const body = JSON.stringify(input);
+    const result = await this.send<{ session: SessionItem }>(
+      `/api/events/${encodeURIComponent(eventId)}/sessions`,
+      {
+        method: 'POST',
+        body,
+      }
+    );
+    return HttpDataProvider.mapSessionItem(result.session);
   }
 
   async updateSession(id: string, input: UpdateSessionInput): Promise<SessionItem> {

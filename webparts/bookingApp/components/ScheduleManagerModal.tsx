@@ -33,6 +33,8 @@ export type ScheduleEventEditable = {
   waitlistEnabled?: boolean;
   requiresApproval?: boolean;
   eventTypeId?: string;
+  eventImageUrl?: string;
+  eventImageDescription?: string;
 };
 
 export type ScheduleSessionEditable = {
@@ -62,8 +64,19 @@ export type ScheduleUpdateSessionPayload = Partial<ScheduleSessionEditable>;
 export type ScheduleManagerChangeSet = {
   updatedEvents: Array<{ id: string; data: ScheduleUpdateEventPayload }>;
   deletedEvents: Array<{ id: string }>;
+  createdSessions: Array<{
+    eventId: string;
+    data: {
+      title: string;
+      startDateTime: string;
+      endDateTime: string;
+      sessionCapacity?: number;
+      details?: string;
+    };
+  }>;
   updatedSessions: Array<{ id: string; data: ScheduleUpdateSessionPayload }>;
   deletedSessions: Array<{ id: string }>;
+  updatedEventImages: Array<{ id: string; file: File; description?: string }>;
 };
 
 type ManagerSessionState = {
@@ -73,6 +86,7 @@ type ManagerSessionState = {
   draft: ScheduleSessionEditable;
   sessionEditing: boolean;
   sessionDeleted: boolean;
+  isNew: boolean;
 };
 
 type ManagerEventState = {
@@ -82,6 +96,7 @@ type ManagerEventState = {
   draft: ScheduleEventEditable;
   eventEditing: boolean;
   eventDeleted: boolean;
+  imageFile?: File;
   sessions: ManagerSessionState[];
 };
 
@@ -92,6 +107,7 @@ const createManagerEventState = (input: ManagedScheduleEvent): ManagerEventState
   draft: { ...input.event },
   eventEditing: false,
   eventDeleted: false,
+  imageFile: undefined,
   sessions: (input.sessions || []).map((session) => ({
     id: session.id,
     numericId: session.numericId,
@@ -99,6 +115,7 @@ const createManagerEventState = (input: ManagedScheduleEvent): ManagerEventState
     draft: { ...session.session },
     sessionEditing: false,
     sessionDeleted: false,
+    isNew: false,
   })),
 });
 
@@ -141,6 +158,16 @@ const buildEventDiff = (
   if ((draft.eventTypeId || '').trim() !== (original.eventTypeId || '').trim()) {
     const value = draft.eventTypeId?.trim();
     diff.eventTypeId = value ? value : undefined;
+  }
+  const draftImageDescription = (draft.eventImageDescription || '').trim();
+  const originalImageDescription = (original.eventImageDescription || '').trim();
+  if (draftImageDescription !== originalImageDescription) {
+    diff.eventImageDescription = draftImageDescription || undefined;
+  }
+  const draftImageUrl = (draft.eventImageUrl || '').trim();
+  const originalImageUrl = (original.eventImageUrl || '').trim();
+  if (draftImageUrl !== originalImageUrl) {
+    diff.eventImageUrl = draftImageUrl ? draftImageUrl : undefined;
   }
   return diff;
 };
@@ -307,6 +334,28 @@ const createEmptySession = (): ScheduleSessionFormValues => ({
   details: '',
 });
 
+const createManagedSessionState = (): ManagerSessionState => ({
+  id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  numericId: 0,
+  original: {
+    title: '',
+    startDateTime: undefined,
+    endDateTime: undefined,
+    sessionCapacity: undefined,
+    details: undefined,
+  },
+  draft: {
+    title: '',
+    startDateTime: undefined,
+    endDateTime: undefined,
+    sessionCapacity: undefined,
+    details: undefined,
+  },
+  sessionEditing: true,
+  sessionDeleted: false,
+  isNew: true,
+});
+
 const ScheduleManagerModal = ({
   isOpen,
   isSubmitting,
@@ -325,12 +374,18 @@ const ScheduleManagerModal = ({
   const hasManageChanges = React.useMemo(() => {
     return managerItems.some((event) => {
       if (event.eventDeleted) return true;
+      if (event.imageFile) return true;
       if (event.eventEditing && Object.keys(buildEventDiff(event.original, event.draft)).length > 0) {
         return true;
       }
       return event.sessions.some((session) => {
+        const sessionDiff = buildSessionDiff(session.original, session.draft);
+        if (session.isNew) {
+          if (session.sessionDeleted) return false;
+          return Object.keys(sessionDiff).length > 0;
+        }
         if (session.sessionDeleted) return true;
-        if (session.sessionEditing && Object.keys(buildSessionDiff(session.original, session.draft)).length > 0) {
+        if (session.sessionEditing && Object.keys(sessionDiff).length > 0) {
           return true;
         }
         return false;
@@ -369,9 +424,22 @@ const ScheduleManagerModal = ({
       updateEventState(eventId, (event) => {
         if (event.eventDeleted) return event;
         if (event.eventEditing) {
-          return { ...event, eventEditing: false, draft: { ...event.original } };
+          return {
+            ...event,
+            eventEditing: false,
+            draft: { ...event.original },
+            imageFile: undefined,
+            sessions: event.sessions
+              .filter((session) => !session.isNew)
+              .map((session) => ({
+                ...session,
+                sessionEditing: false,
+                sessionDeleted: false,
+                draft: { ...session.original },
+              })),
+          };
         }
-        return { ...event, eventEditing: true };
+        return { ...event, eventEditing: true, imageFile: undefined };
       });
     },
     [updateEventState]
@@ -390,6 +458,17 @@ const ScheduleManagerModal = ({
     [updateEventState]
   );
 
+  const handleEventImageFileChange = React.useCallback(
+    (eventId: string, file?: File | null) => {
+      setError(undefined);
+      updateEventState(eventId, (event) => {
+        if (event.eventDeleted || !event.eventEditing) return event;
+        return { ...event, imageFile: file ?? undefined };
+      });
+    },
+    [updateEventState]
+  );
+
   const handleToggleEventDelete = React.useCallback(
     (eventId: string) => {
       setError(undefined);
@@ -403,13 +482,16 @@ const ScheduleManagerModal = ({
                   ...event,
                   eventDeleted: false,
                   eventEditing: false,
+                  imageFile: undefined,
                   draft: { ...event.original },
-                  sessions: event.sessions.map((session) => ({
-                    ...session,
-                    sessionDeleted: false,
-                    sessionEditing: false,
-                    draft: { ...session.original },
-                  })),
+                  sessions: event.sessions
+                    .filter((session) => !session.isNew)
+                    .map((session) => ({
+                      ...session,
+                      sessionDeleted: false,
+                      sessionEditing: false,
+                      draft: { ...session.original },
+                    })),
                 }
               : event
           )
@@ -427,6 +509,7 @@ const ScheduleManagerModal = ({
                 ...event,
                 eventDeleted: true,
                 eventEditing: false,
+                imageFile: undefined,
                 draft: { ...event.original },
                 sessions: event.sessions.map((session) => ({
                   ...session,
@@ -453,7 +536,24 @@ const ScheduleManagerModal = ({
         return { ...session, sessionEditing: true };
       });
     },
-    [updateSessionState]
+  [updateSessionState]
+);
+
+  const handleAddManagedSession = React.useCallback(
+    (eventId: string) => {
+      setError(undefined);
+      setManagerItems((prev) =>
+        prev.map((event) => {
+          if (event.id !== eventId || event.eventDeleted) return event;
+          return {
+            ...event,
+            sessions: [...event.sessions, createManagedSessionState()],
+            eventEditing: true,
+          };
+        })
+      );
+    },
+    []
   );
 
   const handleSessionFieldChange = React.useCallback(
@@ -473,38 +573,56 @@ const ScheduleManagerModal = ({
     (eventId: string, sessionId: string) => {
       setError(undefined);
       const hostEvent = managerItems.find((event) => event.id === eventId);
-      const targetSession = hostEvent?.sessions.find((session) => session.id === sessionId);
-      if (!hostEvent || !targetSession) return;
-      if (targetSession.sessionDeleted) {
+      if (!hostEvent) return;
+      const target = hostEvent.sessions.find((session) => session.id === sessionId);
+      if (!target) return;
+      if (target.isNew) {
+        const approved = window.confirm('Discard this new session?');
+        if (!approved) return;
         setManagerItems((prev) =>
-          prev.map((event) => {
-            if (event.id !== eventId) return event;
-            return {
-              ...event,
-              sessions: event.sessions.map((session) =>
-                session.id === sessionId
-                  ? { ...session, sessionDeleted: false, sessionEditing: false, draft: { ...session.original } }
-                  : session
-              ),
-            };
-          })
+          prev.map((event) =>
+            event.id === eventId
+              ? {
+                  ...event,
+                  sessions: event.sessions.filter((session) => session.id !== sessionId),
+                }
+              : event
+          )
+        );
+        return;
+      }
+      if (target.sessionDeleted) {
+        setManagerItems((prev) =>
+          prev.map((event) =>
+            event.id === eventId
+              ? {
+                  ...event,
+                  sessions: event.sessions.map((session) =>
+                    session.id === sessionId
+                      ? { ...session, sessionDeleted: false, sessionEditing: false, draft: { ...session.original } }
+                      : session
+                  ),
+                }
+              : event
+          )
         );
         return;
       }
       const approved = window.confirm('Delete this session? This action cannot be undone.');
       if (!approved) return;
       setManagerItems((prev) =>
-        prev.map((event) => {
-          if (event.id !== eventId) return event;
-          return {
-            ...event,
-            sessions: event.sessions.map((session) =>
-              session.id === sessionId
-                ? { ...session, sessionDeleted: true, sessionEditing: false, draft: { ...session.original } }
-                : session
-            ),
-          };
-        })
+        prev.map((event) =>
+          event.id === eventId
+            ? {
+                ...event,
+                sessions: event.sessions.map((session) =>
+                  session.id === sessionId
+                    ? { ...session, sessionDeleted: true, sessionEditing: false, draft: { ...session.original } }
+                    : session
+                ),
+              }
+            : event
+        )
       );
     },
     [managerItems]
@@ -518,24 +636,81 @@ const ScheduleManagerModal = ({
     const changeSet: ScheduleManagerChangeSet = {
       updatedEvents: [],
       deletedEvents: [],
+      createdSessions: [],
       updatedSessions: [],
       deletedSessions: [],
+      updatedEventImages: [],
     };
-    managerItems.forEach((event) => {
+    let validationError: string | undefined;
+
+    for (const event of managerItems) {
       if (event.eventDeleted) {
         changeSet.deletedEvents.push({ id: event.id });
-        return;
+        continue;
       }
       if (event.eventEditing) {
         const diff = buildEventDiff(event.original, event.draft);
         if (Object.keys(diff).length > 0) {
           changeSet.updatedEvents.push({ id: event.id, data: diff });
         }
+        if (event.imageFile) {
+          const originalDescription = (event.original.eventImageDescription || '').trim();
+          const draftDescription = (event.draft.eventImageDescription || '').trim();
+          const descriptionChanged = draftDescription !== originalDescription;
+          const descriptionToUse = descriptionChanged ? draftDescription : undefined;
+          changeSet.updatedEventImages.push({
+            id: event.id,
+            file: event.imageFile,
+            description: descriptionToUse,
+          });
+        }
       }
-      event.sessions.forEach((session) => {
+      for (const session of event.sessions) {
+        if (session.isNew) {
+          if (session.sessionDeleted) {
+            continue;
+          }
+          const title = (session.draft.title || '').trim();
+          if (!title) {
+            validationError = 'New sessions require a title.';
+            break;
+          }
+          const startIso = session.draft.startDateTime;
+          const endIso = session.draft.endDateTime;
+          if (!startIso || !endIso) {
+            validationError = 'New sessions require both start and end times.';
+            break;
+          }
+          const startDate = new Date(startIso);
+          const endDate = new Date(endIso);
+          if (!Number.isFinite(startDate.getTime()) || !Number.isFinite(endDate.getTime())) {
+            validationError = 'New session times must be valid dates.';
+            break;
+          }
+          if (endDate <= startDate) {
+            validationError = 'New session end time must be after the start time.';
+            break;
+          }
+          const sessionCapacity =
+            typeof session.draft.sessionCapacity === 'number' && Number.isFinite(session.draft.sessionCapacity)
+              ? session.draft.sessionCapacity
+              : undefined;
+          const details = (session.draft.details || '').trim();
+          changeSet.createdSessions.push({
+            eventId: event.id,
+            data: {
+              title,
+              startDateTime: startDate.toISOString(),
+              endDateTime: endDate.toISOString(),
+              sessionCapacity,
+              details: details ? details : undefined,
+            },
+          });
+          continue;
+        }
         if (session.sessionDeleted) {
           changeSet.deletedSessions.push({ id: session.id });
-          return;
+          continue;
         }
         if (session.sessionEditing) {
           const diff = buildSessionDiff(session.original, session.draft);
@@ -543,14 +718,22 @@ const ScheduleManagerModal = ({
             changeSet.updatedSessions.push({ id: session.id, data: diff });
           }
         }
-      });
-    });
+      }
+      if (validationError) break;
+    }
+
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
 
     const hasChanges =
       changeSet.deletedEvents.length > 0 ||
       changeSet.deletedSessions.length > 0 ||
+      changeSet.createdSessions.length > 0 ||
       changeSet.updatedEvents.length > 0 ||
-      changeSet.updatedSessions.length > 0;
+      changeSet.updatedSessions.length > 0 ||
+      changeSet.updatedEventImages.length > 0;
 
     if (!hasChanges) {
       setError('No schedule changes to save.');
@@ -1077,7 +1260,7 @@ const ScheduleManagerModal = ({
               ) : (
                 managerItems.map((eventState, eventIndex) => {
                   const eventDiff = buildEventDiff(eventState.original, eventState.draft);
-                  const eventDirty = Object.keys(eventDiff).length > 0;
+                  const eventDirty = Object.keys(eventDiff).length > 0 || Boolean(eventState.imageFile);
                   const eventFieldsDisabled = !eventState.eventEditing || eventState.eventDeleted || isSubmitting;
                   return (
                     <div
@@ -1265,10 +1448,93 @@ const ScheduleManagerModal = ({
                             Requires approval
                           </label>
                         </div>
+
+                        <div style={{ display: 'grid', gap: 8 }}>
+                          <div style={labelStyle}>
+                            <span>Event image</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) => {
+                                const file = e.target.files && e.target.files[0] ? e.target.files[0] : undefined;
+                                handleEventImageFileChange(eventState.id, file);
+                                if (e.target.value) {
+                                  e.target.value = '';
+                                }
+                              }}
+                              disabled={eventFieldsDisabled}
+                            />
+                            <div style={{ fontSize: 11, color: 'rgba(0, 57, 70, 0.75)' }}>
+                              {eventState.imageFile
+                                ? `Selected: ${eventState.imageFile.name}`
+                                : eventState.draft.eventImageUrl
+                                ? 'Current image will be retained unless replaced.'
+                                : 'No image is currently associated with this event.'}
+                            </div>
+                            {eventState.draft.eventImageUrl && !eventState.imageFile && (
+                              <img
+                                src={eventState.draft.eventImageUrl}
+                                alt={eventState.draft.eventImageDescription || 'Event image preview'}
+                                style={{
+                                  marginTop: 6,
+                                  borderRadius: 8,
+                                  maxWidth: '100%',
+                                  maxHeight: 140,
+                                  objectFit: 'cover',
+                                  border: '1px solid rgba(0, 57, 70, 0.12)',
+                                }}
+                              />
+                            )}
+                            {eventState.imageFile && (
+                              <button
+                                type="button"
+                                className={styles.btnGhost}
+                                data-brand="ghost"
+                                style={{
+                                  marginTop: 8,
+                                  alignSelf: 'flex-start',
+                                  borderRadius: 999,
+                                  fontSize: 11,
+                                  fontWeight: 600,
+                                  padding: '0 12px',
+                                }}
+                                onClick={() => handleEventImageFileChange(eventState.id, undefined)}
+                                disabled={eventFieldsDisabled}
+                              >
+                                Clear selection
+                              </button>
+                            )}
+                          </div>
+
+                          <label style={labelStyle}>
+                            <span>Image description (alt text)</span>
+                            <textarea
+                              value={eventState.draft.eventImageDescription ?? ''}
+                              onChange={(e) =>
+                                handleEventFieldChange(eventState.id, 'eventImageDescription', e.target.value)
+                              }
+                              placeholder="Describe the image for accessibility"
+                              style={textareaStyle}
+                              disabled={eventFieldsDisabled}
+                            />
+                          </label>
+                        </div>
                       </div>
 
                       <div style={{ display: 'grid', gap: 10 }}>
-                        <div style={{ fontWeight: 600, color: palette.deep, fontSize: 14 }}>Sessions</div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div style={{ fontWeight: 600, color: palette.deep, fontSize: 14 }}>Sessions</div>
+                          <button
+                            type="button"
+                            className={styles.btnGhost}
+                            data-brand="ghost"
+                            style={{ height: 28, borderRadius: 999, fontSize: 12, fontWeight: 600, padding: '0 12px' }}
+                            onClick={() => handleAddManagedSession(eventState.id)}
+                            disabled={eventFieldsDisabled}
+                          >
+                            Add session
+                          </button>
+                        </div>
                         {eventState.sessions.length === 0 ? (
                           <div style={{ fontSize: 12, color: palette.neutralDark }}>
                             No sessions are currently linked to this event.
